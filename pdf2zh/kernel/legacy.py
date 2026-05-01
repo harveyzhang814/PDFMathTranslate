@@ -58,6 +58,8 @@ class LegacyKernel:
             "skip_subset_fonts": request.skip_subset_fonts,
             "ignore_cache": request.ignore_cache,
             "compatible": request.compatible,
+            "extract_elements": request.extract_elements,
+            "elements_output_dir": request.elements_output_dir,
         }
 
         if request.pages and isinstance(request.pages, list):

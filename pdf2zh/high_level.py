@@ -87,6 +87,8 @@ def translate_patch(
     envs: Dict = None,
     prompt: Template = None,
     ignore_cache: bool = False,
+    extract_elements: bool = False,
+    elements_output_dir: str = None,
     **kwarg: Any,
 ) -> None:
     rsrcmgr = PDFResourceManager()
@@ -132,6 +134,38 @@ def translate_patch(
                 pix.height, pix.width, 3
             )[:, :, ::-1]
             page_layout = model.predict(image, imgsz=int(pix.height / 32) * 32)[0]
+
+            # ---- Extract figures and tables as separate images ----
+            if extract_elements and elements_output_dir:
+                from PIL import Image
+                elem_dir = os.path.join(elements_output_dir, "elements")
+                os.makedirs(elem_dir, exist_ok=True)
+                elem_counter = {"figure": 0, "table": 0}
+                pix_h, pix_w = pix.height, pix.width
+                # image is in BGR format (reversed from RGB)
+                img_h, img_w = image.shape[:2]
+                assert pix_h == img_h and pix_w == img_w
+                for d in page_layout.boxes:
+                    cls_name = page_layout.names[int(d.cls)]
+                    if cls_name not in ("figure", "table"):
+                        continue
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    # Convert from image coords (top-left origin) to numpy array slice
+                    # image y0=top, y1=bottom; pixmap y0=bottom, y1=top
+                    slice_x0 = int(np.clip(int(x0 - 1), 0, pix_w))
+                    slice_x1 = int(np.clip(int(x1 + 1), 0, pix_w))
+                    slice_y0 = int(np.clip(int(pix_h - y1 - 1), 0, pix_h))  # top in image
+                    slice_y1 = int(np.clip(int(pix_h - y0 + 1), 0, pix_h))  # bottom in image
+                    if slice_x1 <= slice_x0 or slice_y1 <= slice_y0:
+                        continue
+                    elem_counter[cls_name] += 1
+                    # Crop from numpy image (BGR) and convert to RGB for PIL
+                    crop_bgr = image[slice_y0:slice_y1, slice_x0:slice_x1]
+                    crop_rgb = crop_bgr[:, :, ::-1]  # BGR -> RGB
+                    pil_img = Image.fromarray(crop_rgb.astype("uint8"), "RGB")
+                    fname = f"p{pageno+1}_{cls_name}_{elem_counter[cls_name]:03d}.png"
+                    pil_img.save(os.path.join(elem_dir, fname))
+
             # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
@@ -184,6 +218,8 @@ def translate_stream(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    extract_elements: bool = False,
+    elements_output_dir: str = None,
     **kwarg: Any,
 ):
     font_list = [("tiro", None)]
@@ -319,6 +355,8 @@ def translate(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    extract_elements: bool = False,
+    elements_output_dir: str = None,
     **kwarg: Any,
 ):
     if not files:

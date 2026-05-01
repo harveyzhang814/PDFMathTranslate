@@ -201,6 +201,20 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parse_params.add_argument(
+        "--extract-elements",
+        action="store_true",
+        help="Extract figures and tables as separate image files during translation.",
+    )
+
+    parse_params.add_argument(
+        "--elements-output-dir",
+        type=str,
+        default="",
+        help="Output directory for extracted elements. "
+        "If not specified, elements are saved alongside the translated PDF.",
+    )
+
+    parse_params.add_argument(
         "--mcp", action="store_true", help="Launch pdf2zh MCP server in STDIO mode"
     )
 
@@ -371,6 +385,8 @@ def main(args: Optional[List[str]] = None) -> int:
         ignore_cache=parsed_args.ignore_cache,
         compatible=parsed_args.compatible,
         debug=parsed_args.debug,
+        extract_elements=parsed_args.extract_elements,
+        elements_output_dir=parsed_args.elements_output_dir,
     )
     kernel.translate(request)
     return 0
