@@ -6,6 +6,7 @@ def detect_column_layout(
     text_blocks_x0: List[float],
     page_width: float,
     avg_text_width: float = None,
+    table_boxes: List[dict] = None,
 ) -> Tuple[str, float]:
     """
     Detect single or double column layout using x0 coordinate clustering.
@@ -14,12 +15,28 @@ def detect_column_layout(
         text_blocks_x0: List of x0 (left edge) coordinates of text blocks
         page_width: Total page width in points
         avg_text_width: Average text block width (optional, for fallback detection)
+        table_boxes: List of table bounding boxes from DocLayout [{x0,y0,x1,y1},...] (optional)
+                    Used to exclude narrow table cells from gutter calculation
 
     Returns:
         ('single' or 'double', gutter_x0 position if double)
     """
     if len(text_blocks_x0) < 3:
         return 'single', 0.0
+
+    # Filter out blocks that overlap with table regions (table narrow cells cause false gaps)
+    if table_boxes:
+        filtered_x0 = []
+        for x0 in text_blocks_x0:
+            is_table_cell = False
+            for tb in table_boxes:
+                if abs(x0 - tb["x0"]) < 20:  # block x0 aligns with table region
+                    is_table_cell = True
+                    break
+            if not is_table_cell:
+                filtered_x0.append(x0)
+        if len(filtered_x0) >= 3:
+            text_blocks_x0 = filtered_x0
 
     x0 = np.array(text_blocks_x0)
     x0_normalized = x0 / page_width  # normalize to 0-1
@@ -61,6 +78,7 @@ def sort_text_blocks_by_layout(
     page_width: float,
     page_height: float,
     avg_text_width: float = None,
+    table_boxes: List[dict] = None,
 ) -> List[dict]:
     """
     Sort text blocks by reading order, accounting for column layout.
@@ -74,7 +92,7 @@ def sort_text_blocks_by_layout(
 
     # Detect column layout
     x0_values = [b["x0"] for b in text_blocks]
-    layout_type, gutter_x0 = detect_column_layout(x0_values, page_width, avg_text_width)
+    layout_type, gutter_x0 = detect_column_layout(x0_values, page_width, avg_text_width, table_boxes)
 
     if layout_type == 'single':
         # Simple: sort by y0 descending (top to bottom), then x0 ascending

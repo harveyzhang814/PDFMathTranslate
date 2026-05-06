@@ -135,6 +135,14 @@ def translate_patch(
             )[:, :, ::-1]
             page_layout = model.predict(image, imgsz=int(pix.height / 32) * 32)[0]
 
+            # ---- Collect table boxes for column layout detection ----
+            table_boxes = []
+            for d in page_layout.boxes:
+                if page_layout.names[int(d.cls)] == "table":
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    table_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1)})
+
+
             # ---- Extract figures and tables as separate images ----
             if extract_elements and elements_output_dir:
                 from PIL import Image
