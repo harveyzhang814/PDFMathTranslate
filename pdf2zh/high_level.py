@@ -135,12 +135,34 @@ def translate_patch(
             )[:, :, ::-1]
             page_layout = model.predict(image, imgsz=int(pix.height / 32) * 32)[0]
 
-            # ---- Collect table boxes for column layout detection ----
+            # ---- Collect element boxes for layout analysis and caption pairing ----
+            figure_boxes = []
             table_boxes = []
+            caption_data = {}  # {(pageno, type, idx): text}
+            elem_counter = {"figure": 0, "table": 0}
+
             for d in page_layout.boxes:
-                if page_layout.names[int(d.cls)] == "table":
+                cls_name = page_layout.names[int(d.cls)]
+                if cls_name == "table":
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     table_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1)})
+                elif cls_name == "figure":
+                    elem_counter["figure"] += 1
+                    idx = elem_counter["figure"]
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    figure_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "idx": idx, "pageno": pageno})
+                elif cls_name == "figure_caption":
+                    cap_boxes = page.get_text("dict")["blocks"]
+                    for cb in cap_boxes:
+                        if cb.get("type") == 0:
+                            bx0, by0, bx1, by1 = cb["bbox"]
+                            dx0, dy0, dx1, dy1 = d.xyxy.squeeze()
+                            if abs(bx0 - dx0) < 20 and abs(by0 - dy0) < 20:
+                                cap_text = cb["lines"][0]["spans"][0]["text"] if cb["lines"] else ""
+                                # Use the NEXT figure idx as the pairing key
+                                pairing_idx = elem_counter["figure"] + 1
+                                caption_data[(pageno, "figure", pairing_idx)] = cap_text
+                                break
 
 
             # ---- Extract figures and tables as separate images ----
@@ -148,9 +170,8 @@ def translate_patch(
                 from PIL import Image
                 elem_dir = os.path.join(elements_output_dir, "elements")
                 os.makedirs(elem_dir, exist_ok=True)
-                elem_counter = {"figure": 0, "table": 0}
+                extract_counter = {"figure": 0, "table": 0}
                 pix_h, pix_w = pix.height, pix.width
-                # image is in BGR format (reversed from RGB)
                 img_h, img_w = image.shape[:2]
                 assert pix_h == img_h and pix_w == img_w
                 for d in page_layout.boxes:
@@ -158,20 +179,17 @@ def translate_patch(
                     if cls_name not in ("figure", "table"):
                         continue
                     x0, y0, x1, y1 = d.xyxy.squeeze()
-                    # Convert from image coords (top-left origin) to numpy array slice
-                    # image y0=top, y1=bottom; pixmap y0=bottom, y1=top
                     slice_x0 = int(np.clip(int(x0 - 1), 0, pix_w))
                     slice_x1 = int(np.clip(int(x1 + 1), 0, pix_w))
-                    slice_y0 = int(np.clip(int(pix_h - y1 - 1), 0, pix_h))  # top in image
-                    slice_y1 = int(np.clip(int(pix_h - y0 + 1), 0, pix_h))  # bottom in image
+                    slice_y0 = int(np.clip(int(pix_h - y1 - 1), 0, pix_h))
+                    slice_y1 = int(np.clip(int(pix_h - y0 + 1), 0, pix_h))
                     if slice_x1 <= slice_x0 or slice_y1 <= slice_y0:
                         continue
-                    elem_counter[cls_name] += 1
-                    # Crop from numpy image (BGR) and convert to RGB for PIL
+                    extract_counter[cls_name] += 1
                     crop_bgr = image[slice_y0:slice_y1, slice_x0:slice_x1]
-                    crop_rgb = crop_bgr[:, :, ::-1]  # BGR -> RGB
+                    crop_rgb = crop_bgr[:, :, ::-1]
                     pil_img = Image.fromarray(crop_rgb.astype("uint8"), "RGB")
-                    fname = f"p{pageno+1}_{cls_name}_{elem_counter[cls_name]:03d}.png"
+                    fname = f"p{pageno+1}_{cls_name}_{extract_counter[cls_name]:03d}.png"
                     pil_img.save(os.path.join(elem_dir, fname))
 
             # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
