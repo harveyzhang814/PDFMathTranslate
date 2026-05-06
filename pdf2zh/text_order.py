@@ -30,7 +30,7 @@ def detect_column_layout(
         for x0 in text_blocks_x0:
             is_table_cell = False
             for tb in table_boxes:
-                if abs(x0 - tb["x0"]) < 20:  # block x0 aligns with table region
+                if abs(x0 - tb["x0"]) < 20:
                     is_table_cell = True
                     break
             if not is_table_cell:
@@ -39,30 +39,23 @@ def detect_column_layout(
             text_blocks_x0 = filtered_x0
 
     x0 = np.array(text_blocks_x0)
-    x0_normalized = x0 / page_width  # normalize to 0-1
+    x0_normalized = x0 / page_width
 
-    # Simple peak detection: find gaps in x0 distribution
     sorted_x0 = np.sort(x0_normalized)
     gaps = np.diff(sorted_x0)
 
     if len(gaps) == 0:
         return 'single', 0.0
 
-    # Find large gaps (> 15% of page width)
-    # For typical double-column journal: left col ends ~43%, gutter 14-20%, right col starts ~57%
     large_gap_indices = np.where(gaps > 0.15)[0]
 
     if len(large_gap_indices) >= 1:
-        # Likely double column - gap indicates gutter
         gutter_x0 = (sorted_x0[large_gap_indices[0]] + sorted_x0[large_gap_indices[0] + 1]) / 2 * page_width
         return 'double', gutter_x0
 
-    # Fallback: if text blocks are all narrow, check avg_width
     if avg_text_width is not None:
         width_ratio = avg_text_width / page_width
         if width_ratio < 0.50:
-            # Narrow blocks but no big gap → might be double col with tight columns
-            # Try clustering: split sorted x0 in half, if both halves are tight → double
             mid = len(sorted_x0) // 2
             left_spread = sorted_x0[mid] - sorted_x0[0]
             right_spread = sorted_x0[-1] - sorted_x0[mid]
@@ -79,34 +72,32 @@ def sort_text_blocks_by_layout(
     page_height: float,
     avg_text_width: float = None,
     table_boxes: List[dict] = None,
+    caption_boxes: List[dict] = None,
 ) -> List[dict]:
     """
     Sort text blocks by reading order, accounting for column layout.
 
     Each text_block dict must have: x0, y0, x1, y1 (in PDF coordinates, y from bottom)
 
-    Returns sorted list of text_block dicts.
+    table_boxes and caption_boxes are from DocLayout and are used to:
+    - Group narrow table cells into their parent table region
+    - Table captions sort naturally by y0 (captions appear above data in PDF coords)
     """
     if not text_blocks:
         return []
 
-    # Detect column layout
     x0_values = [b["x0"] for b in text_blocks]
     layout_type, gutter_x0 = detect_column_layout(x0_values, page_width, avg_text_width, table_boxes)
 
     if layout_type == 'single':
-        # Simple: sort by y0 descending (top to bottom), then x0 ascending
         sorted_blocks = sorted(
             text_blocks,
             key=lambda b: (-b["y0"], b["x0"])
         )
     else:
-        # Double column: assign to left or right bucket, then sort within each bucket
         def bucket_key(b):
-            if b["x0"] < gutter_x0:
-                return (0, -b["y0"], b["x0"])  # left column
-            else:
-                return (1, -b["y0"], b["x0"])  # right column
+            col_bucket = 0 if b["x0"] < gutter_x0 else 1
+            return (col_bucket, -b["y0"], b["x0"])
 
         sorted_blocks = sorted(text_blocks, key=bucket_key)
 
