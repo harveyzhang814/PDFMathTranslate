@@ -215,6 +215,12 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parse_params.add_argument(
+        "--word",
+        action="store_true",
+        help="Export translated content as a Word document (.docx) with images and tables.",
+    )
+
+    parse_params.add_argument(
         "--mcp", action="store_true", help="Launch pdf2zh MCP server in STDIO mode"
     )
 
@@ -356,6 +362,24 @@ def main(args: Optional[List[str]] = None) -> int:
 
     KernelRegistry.switch(parsed_args.mode)  # "fast" or "precise"
     kernel = KernelRegistry.get()
+
+    if parsed_args.word:
+        from pdf2zh.high_level import translate_to_word
+        from pdf2zh.doclayout import OnnxModel
+
+        for file in parsed_args.files:
+            docx_path = translate_to_word(
+                files=[file],
+                output=parsed_args.output or "",
+                lang_in=parsed_args.lang_in,
+                lang_out=parsed_args.lang_out,
+                service=parsed_args.service,
+                thread=parsed_args.thread,
+                model=ModelInstance.value,
+                pages=parsed_args.pages,
+            )
+            print(f"Word document saved: {docx_path}")
+        return 0
 
     if parsed_args.dir:
         parsed_args.files = find_all_files_in_directory(parsed_args.files[0])

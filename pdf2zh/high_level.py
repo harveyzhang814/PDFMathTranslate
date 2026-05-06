@@ -17,6 +17,7 @@ import requests
 import tqdm
 
 from pdf2zh.converter_docx import convert_to_pdf, is_convertible
+from pdf2zh.export_word import export_pdf_to_word
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFResourceManager
@@ -488,3 +489,66 @@ def download_remote_fonts(lang: str):
     logger.info(f"use font: {font_path}")
 
     return font_path
+
+
+def translate_to_word(
+    files: List[str],
+    output: str = "",
+    lang_in: str = "en",
+    lang_out: str = "zh",
+    service: str = "google",
+    thread: int = 0,
+    model=None,
+    pages: Optional[List[int]] = None,
+    skip_subset_fonts: bool = True,
+    **kwargs,
+) -> str:
+    """
+    Translate PDF files and export as a Word document with images and tables.
+
+    Args:
+        files: list of input PDF paths
+        output: output directory
+        lang_in: source language
+        lang_out: target language
+        service: translation service (e.g. "google", "ollama:gemma2:9b")
+        thread: number of threads (0=auto)
+        model: layout model (OnnxModel instance)
+        pages: optional page list to translate
+
+    Returns:
+        Path to the generated .docx file
+    """
+    if not output:
+        output = tempfile.mkdtemp(prefix="pdf2zh_word_")
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Temp dir for extracted elements — lives until export completes
+    elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+    try:
+        # Step 1: translate with element extraction
+        result = translate(
+            files=files,
+            output=str(output_path),
+            lang_in=lang_in,
+            lang_out=lang_out,
+            service=service,
+            thread=thread,
+            model=model,
+            pages=pages,
+            extract_elements=True,
+            elements_output_dir=elem_dir,
+            skip_subset_fonts=skip_subset_fonts,
+        )
+
+        mono_pdf = result[0][0]
+
+        # Step 2: export to Word (uses elem_dir before we clean up)
+        docx_path = str(output_path / f"{Path(mono_pdf).stem}.docx")
+        export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out)
+    finally:
+        import shutil
+        shutil.rmtree(elem_dir, ignore_errors=True)
+
+    return docx_path
