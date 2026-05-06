@@ -52,6 +52,7 @@ class PDFConverterEx(PDFConverter):
         rsrcmgr: PDFResourceManager,
     ) -> None:
         PDFConverter.__init__(self, rsrcmgr, None, "utf-8", 1, None)
+        self._page_gutter_x0 = 0
 
     def begin_page(self, page, ctm) -> None:
         # 重载替换 cropbox
@@ -60,6 +61,35 @@ class PDFConverterEx(PDFConverter):
         x1, y1 = apply_matrix_pt(ctm, (x1, y1))
         mediabox = (0, 0, abs(x0 - x1), abs(y0 - y1))
         self.cur_item = LTPage(page.pageno, mediabox)
+        self.page = page
+        self.cur_x = x0
+        self.cur_y = y0
+        self.page_height = abs(y1 - y0)
+        self.page_width = abs(x0 - x1)
+        self.rstk.clear()
+        self.rstk.append((x0, y0, x1, y1))
+
+        # Detect column layout for reading order reordering
+        try:
+            import pymupdf
+            page_rect = page.rect
+            blocks = page.get_text("blocks")
+            x0_values = [b[0] for b in blocks if b[4].strip()]
+            if len(x0_values) >= 3:
+                import numpy as np
+                arr = np.array(x0_values) / page_rect.width
+                gaps = np.diff(np.sort(arr))
+                large = np.where(gaps > 0.15)[0]
+                if len(large) >= 1:
+                    sorted_arr = np.sort(arr)
+                    gutter_normalized = (sorted_arr[large[0]] + sorted_arr[large[0] + 1]) / 2
+                    self._page_gutter_x0 = gutter_normalized * page_rect.width
+                else:
+                    self._page_gutter_x0 = 0
+            else:
+                self._page_gutter_x0 = 0
+        except Exception:
+            self._page_gutter_x0 = 0
 
     def end_page(self, page):
         # 重载返回指令流
@@ -358,6 +388,20 @@ class TranslateConverter(PDFConverterEx):
                 else:
                     log.exception(e, exc_info=False)
                 raise e
+
+        # ---- Reorder paragraphs by reading order before translation ----
+        if len(pstk) > 1:
+            gutter = getattr(self, "_page_gutter_x0", 0)
+            if gutter > 0:
+                paired = sorted(
+                    zip(pstk, sstk),
+                    key=lambda ps: (
+                        0 if ps[0].x < gutter else 1,
+                        -ps[0].y,
+                        ps[0].x,
+                    ),
+                )
+                pstk[:], sstk[:] = zip(*paired)
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=self.thread
         ) as executor:
