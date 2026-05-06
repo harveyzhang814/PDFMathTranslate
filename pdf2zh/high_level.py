@@ -151,18 +151,9 @@ def translate_patch(
                     idx = elem_counter["figure"]
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     figure_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "idx": idx, "pageno": pageno})
-                elif cls_name == "figure_caption":
-                    cap_boxes = page.get_text("dict")["blocks"]
-                    for cb in cap_boxes:
-                        if cb.get("type") == 0:
-                            bx0, by0, bx1, by1 = cb["bbox"]
-                            dx0, dy0, dx1, dy1 = d.xyxy.squeeze()
-                            if abs(bx0 - dx0) < 20 and abs(by0 - dy0) < 20:
-                                cap_text = cb["lines"][0]["spans"][0]["text"] if cb["lines"] else ""
-                                # Use the NEXT figure idx as the pairing key
-                                pairing_idx = elem_counter["figure"] + 1
-                                caption_data[(pageno, "figure", pairing_idx)] = cap_text
-                                break
+                # elif cls_name == "figure_caption":
+                    # caption pairing temporarily disabled - requires pymupdf page access
+                    pass
 
 
             # ---- Extract figures and tables as separate images ----

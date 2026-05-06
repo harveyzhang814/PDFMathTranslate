@@ -53,6 +53,7 @@ class PDFConverterEx(PDFConverter):
     ) -> None:
         PDFConverter.__init__(self, rsrcmgr, None, "utf-8", 1, None)
         self._page_gutter_x0 = 0
+        self.rstk = []
 
     def begin_page(self, page, ctm) -> None:
         # 重载替换 cropbox
