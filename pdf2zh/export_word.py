@@ -111,9 +111,8 @@ def _sanitize(text: str) -> str:
 
 
 def _join_pdf_lines(text: str) -> str:
-    """Collapse PDF visual line-breaks into spaces.
+    """Collapse PDF visual line-breaks into spaces within a single paragraph.
 
-    pymupdf preserves the newline at each visual line boundary inside a block.
     Three cases:
       • hyphenated break  "word-\\nrest"  → "wordrest"
       • mid-word break    "AT\\nR"        → "ATR"   (e.g. column-split acronyms)
@@ -123,6 +122,25 @@ def _join_pdf_lines(text: str) -> str:
     text = re.sub(r"(?<=[^\s])\n(?=[^\s])", "", text)        # mid-word
     text = text.replace("\n", " ")
     return re.sub(r" {2,}", " ", text).strip()
+
+
+# Sentence-ending punctuation that signals a paragraph boundary when followed by \n
+_PARA_SPLIT_RE = re.compile(
+    r"(?<=[。！？!?])\n"          # CJK / ASCII sentence end + newline
+    r"|(?<=\.)\n(?=[A-Z一-鿿])"  # period + newline before capital/CJK
+    r"|\n{2,}"                    # explicit blank line
+)
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """Split a pymupdf block into individual paragraphs.
+
+    A single block sometimes contains multiple paragraphs separated by a blank
+    line or a sentence-ending newline.  Split on those boundaries first so that
+    each paragraph is joined independently.
+    """
+    parts = _PARA_SPLIT_RE.split(text)
+    return [p for p in parts if p.strip()]
 
 
 def _should_include(text: str, lang_out: str) -> bool:
@@ -265,41 +283,46 @@ def export_pdf_to_word(
         blocks = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in sorted_flipped]
 
         for block in blocks:
-            text = _join_pdf_lines(_sanitize(block["content"]))
-            if not text or not _should_include(text, lang_out):
-                continue
+            raw = _sanitize(block["content"])
+            # Split block into paragraphs first so two paragraphs packed into
+            # one pymupdf block don't get merged into one Word paragraph.
+            para_texts = [_join_pdf_lines(p) for p in _split_paragraphs(raw)]
 
-            # Caption blocks start with "Fig N", "Table N", "图N", "表N", etc.
-            # Require a leading pattern so body text containing "图" is not misidentified.
-            is_caption = len(text) < 300 and bool(_CAPTION_RE.match(text))
+            for text in para_texts:
+                if not text or not _should_include(text, lang_out):
+                    continue
 
-            if is_caption:
-                # Find the spatially nearest figure image for this caption
-                matched = _find_nearest_figure(block, page_figures, used_figures)
-                if matched:
-                    # Image first, caption below (standard academic convention)
-                    fig_i, image_file = matched
-                    used_figures.add(fig_i)
-                    parsed = _parse_elem_filename(image_file)
-                    if parsed:
-                        elem_by_idx.pop((parsed["type"], parsed["idx"]), None)
-                    img_path = os.path.join(elements_subdir, image_file)
-                    if os.path.exists(img_path):
-                        _add_image_to_doc(doc, img_path, "")
-                    _add_caption_para(doc, text)
+                # Caption blocks start with "Fig N", "Table N", "图N", "表N", etc.
+                # Require a leading pattern so body text containing "图" is not misidentified.
+                is_caption = len(text) < 300 and bool(_CAPTION_RE.match(text))
+
+                if is_caption:
+                    # Find the spatially nearest figure image for this caption
+                    matched = _find_nearest_figure(block, page_figures, used_figures)
+                    if matched:
+                        # Image first, caption below (standard academic convention)
+                        fig_i, image_file = matched
+                        used_figures.add(fig_i)
+                        parsed = _parse_elem_filename(image_file)
+                        if parsed:
+                            elem_by_idx.pop((parsed["type"], parsed["idx"]), None)
+                        img_path = os.path.join(elements_subdir, image_file)
+                        if os.path.exists(img_path):
+                            _add_image_to_doc(doc, img_path, "")
+                        _add_caption_para(doc, text)
+                    else:
+                        # Fallback: caption first for tables (standard table convention)
+                        _add_caption_para(doc, text)
+                        for elem_type in ["figure", "table"]:
+                            k = (elem_type, next_elem_idx[elem_type])
+                            if k in elem_by_idx:
+                                ef = elem_by_idx.pop(k)
+                                next_elem_idx[elem_type] += 1
+                                img_path = os.path.join(elements_subdir, ef)
+                                _add_image_to_doc(doc, img_path, _make_caption_label(ef))
+                                break
                 else:
-                    # Fallback: caption first for tables (standard table convention)
-                    _add_caption_para(doc, text)
-                    for elem_type in ["figure", "table"]:
-                        k = (elem_type, next_elem_idx[elem_type])
-                        if k in elem_by_idx:
-                            ef = elem_by_idx.pop(k)
-                            next_elem_idx[elem_type] += 1
-                            img_path = os.path.join(elements_subdir, ef)
-                            _add_image_to_doc(doc, img_path, _make_caption_label(ef))
-                            break
-            else:
-                _add_body_para(doc, text)
+                    _add_body_para(doc, text)
 
         # After all text blocks, dump any remaining images (no caption found)
         for (elem_type, idx), ef in sorted(elem_by_idx.items()):
