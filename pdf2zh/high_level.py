@@ -120,6 +120,7 @@ def translate_patch(
 
     all_figure_boxes: list = []
     all_caption_boxes: list = []
+    all_figure_page_coords: list = []  # figure bboxes in pymupdf page coords for Word export
 
     parser = PDFParser(inf)
     doc = PDFDocument(parser)
@@ -160,15 +161,27 @@ def translate_patch(
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     page_caption_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "pageno": pageno})
 
-            # Extract caption text from original page via pymupdf
-            if page_caption_boxes:
+            # Compute pixel→page scale and collect caption text + figure page coords
+            if figure_boxes or page_caption_boxes:
                 mupdf_page = doc_zh[pageno]
                 sx = mupdf_page.rect.width / pix.width if pix.width else 1.0
                 sy = mupdf_page.rect.height / pix.height if pix.height else 1.0
+
                 for cap in page_caption_boxes:
                     clip = MuRect(cap["x0"] * sx, cap["y0"] * sy, cap["x1"] * sx, cap["y1"] * sy)
                     cap["text"] = mupdf_page.get_text("text", clip=clip).strip()
                 all_caption_boxes.extend(page_caption_boxes)
+
+                for fig in figure_boxes:
+                    all_figure_page_coords.append({
+                        "pageno": fig["pageno"],
+                        "idx": fig["idx"],
+                        "image_file": f"p{fig['pageno'] + 1}_figure_{fig['idx']:03d}.png",
+                        "x0": fig["x0"] * sx,
+                        "y0": fig["y0"] * sy,
+                        "x1": fig["x1"] * sx,
+                        "y1": fig["y1"] * sy,
+                    })
 
             all_figure_boxes.extend(figure_boxes)
 
@@ -233,6 +246,14 @@ def translate_patch(
             interpreter.process_page(page)
 
     device.close()
+
+    # Save figure bboxes in page coordinates for proximity-based Word export pairing
+    if extract_elements and elements_output_dir and all_figure_page_coords:
+        import json
+        figures_json = os.path.join(elements_output_dir, "elements", "figures.json")
+        os.makedirs(os.path.dirname(figures_json), exist_ok=True)
+        with open(figures_json, "w", encoding="utf-8") as f:
+            json.dump(all_figure_page_coords, f, indent=2)
 
     # Build element manifest after all pages are processed
     if extract_elements and elements_output_dir and all_figure_boxes:

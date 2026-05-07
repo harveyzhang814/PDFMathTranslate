@@ -128,6 +128,9 @@ def export_pdf_to_word(
         os.path.join(elem_dir, "elements") if elem_dir else ""
     )
 
+    # Load figure layout for proximity-based caption↔image matching
+    figure_layout = _load_figure_layout(elements_subdir) if elements_subdir else {}
+
     for pageno, page in enumerate(doc_mono):
         if pages is not None and pageno not in pages:
             continue
@@ -148,8 +151,10 @@ def export_pdf_to_word(
                 if parsed:
                     elem_by_idx[(parsed["type"], parsed["idx"])] = ef
 
-        # Track which element indices have been consumed
-        next_elem_idx: dict = {"figure": 1, "table": 1}
+        # Per-page figure layout and usage tracking for proximity matching
+        page_figures = figure_layout.get(pageno, [])
+        used_figures: set = set()
+        next_elem_idx: dict = {"figure": 1, "table": 1}  # fallback sequential counter
 
         # Extract and sort text blocks
         blocks = _extract_page_text_blocks(page)
@@ -162,7 +167,12 @@ def export_pdf_to_word(
             continue
 
         avg_w = np.mean([max(b["x1"] - b["x0"], 1) for b in blocks])
-        blocks = sort_text_blocks_by_layout(blocks, page.rect.width, page.rect.height, avg_w)
+        # sort_text_blocks_by_layout expects y-from-bottom (PDF coords).
+        # pymupdf uses y-from-top, so flip before sorting and restore after.
+        ph = page.rect.height
+        flipped = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in blocks]
+        sorted_flipped = sort_text_blocks_by_layout(flipped, page.rect.width, ph, avg_w)
+        blocks = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in sorted_flipped]
 
         for block in blocks:
             text = _sanitize(block["content"])
@@ -185,16 +195,29 @@ def export_pdf_to_word(
                 run.font.size = Pt(9)
                 run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
-                # Try to insert the corresponding image immediately after
-                for elem_type in ["figure", "table"]:
-                    k = (elem_type, next_elem_idx[elem_type])
-                    if k in elem_by_idx:
-                        ef = elem_by_idx.pop(k)
-                        next_elem_idx[elem_type] += 1
-                        img_path = os.path.join(elements_subdir, ef)
-                        label = _make_caption_label(ef)
-                        _add_image_to_doc(doc, img_path, label)
-                        break
+                # Find the spatially nearest figure image for this caption
+                matched = _find_nearest_figure(block, page_figures, used_figures)
+                if matched:
+                    fig_i, image_file = matched
+                    used_figures.add(fig_i)
+                    # Remove from elem_by_idx so end-of-page dump doesn't re-insert it
+                    parsed = _parse_elem_filename(image_file)
+                    if parsed:
+                        elem_by_idx.pop((parsed["type"], parsed["idx"]), None)
+                    img_path = os.path.join(elements_subdir, image_file)
+                    if os.path.exists(img_path):
+                        # Caption was already added above; pass empty label to avoid duplication
+                        _add_image_to_doc(doc, img_path, "")
+                else:
+                    # Fallback: sequential counter for non-figure captions (tables)
+                    for elem_type in ["figure", "table"]:
+                        k = (elem_type, next_elem_idx[elem_type])
+                        if k in elem_by_idx:
+                            ef = elem_by_idx.pop(k)
+                            next_elem_idx[elem_type] += 1
+                            img_path = os.path.join(elements_subdir, ef)
+                            _add_image_to_doc(doc, img_path, _make_caption_label(ef))
+                            break
             else:
                 # Regular paragraph
                 p = doc.add_paragraph(text)
@@ -210,6 +233,50 @@ def export_pdf_to_word(
     doc.save(output_docx_path)
     logger.info(f"Saved Word doc: {output_docx_path}")
     return output_docx_path
+
+
+def _load_figure_layout(elements_subdir: str) -> dict:
+    """Load figures.json and return {pageno: [figure_info, ...]}."""
+    import json
+    figures_json = os.path.join(elements_subdir, "figures.json")
+    if not os.path.exists(figures_json):
+        return {}
+    with open(figures_json, encoding="utf-8") as f:
+        figures = json.load(f)
+    layout: dict = {}
+    for fig in figures:
+        layout.setdefault(fig["pageno"], []).append(fig)
+    return layout
+
+
+def _find_nearest_figure(
+    caption: dict,
+    page_figures: List[dict],
+    used: set,
+) -> Optional[tuple]:
+    """Return (list_index, image_file) of the nearest unused figure, or None."""
+    best_i = None
+    best_score = float("inf")
+    cap_cx = (caption["x0"] + caption["x1"]) / 2
+
+    for i, fig in enumerate(page_figures):
+        if i in used:
+            continue
+        if caption["y0"] >= fig["y1"]:
+            y_gap = caption["y0"] - fig["y1"]
+        elif caption["y1"] <= fig["y0"]:
+            y_gap = fig["y0"] - caption["y1"]
+        else:
+            y_gap = 0
+        fig_cx = (fig["x0"] + fig["x1"]) / 2
+        score = y_gap + abs(cap_cx - fig_cx) * 0.3
+        if score < best_score:
+            best_score = score
+            best_i = i
+
+    if best_i is not None and best_score < 300:
+        return best_i, page_figures[best_i]["image_file"]
+    return None
 
 
 def _make_caption_label(fname: str) -> str:
