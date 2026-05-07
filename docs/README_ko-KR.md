@@ -2,6 +2,12 @@
 
 <div align="center">
 
+> **이 저장소는 [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate)의 개인 포크입니다. 요소 추출, 컬럼 레이아웃 정렬, Word 내보내기 등 실험적 기능이 추가되어 있습니다. 안정 버전은 [업스트림 저장소](https://github.com/Byaidu/PDFMathTranslate)를 이용해 주세요.**
+
+</div>
+
+<div align="center">
+
 [English](../README.md) | [简体中文](README_zh-CN.md) | [繁體中文](README_zh-TW.md) | [日本語](README_ja-JP.md) | 한국어
 
 <img src="./images/banner.png" width="320px"  alt="PDF2ZH"/>

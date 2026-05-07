@@ -555,7 +555,8 @@ demo_recaptcha = """
 
 tech_details_string = f"""
                     <summary>Technical details</summary>
-                    - GitHub: <a href="https://github.com/Byaidu/PDFMathTranslate">Byaidu/PDFMathTranslate</a><br>
+                    - GitHub (fork): <a href="https://github.com/harveyzhang814/PDFMathTranslate">harveyzhang814/PDFMathTranslate</a><br>
+                    - GitHub (upstream): <a href="https://github.com/Byaidu/PDFMathTranslate">Byaidu/PDFMathTranslate</a><br>
                     - BabelDOC: <a href="https://github.com/funstory-ai/BabelDOC">funstory-ai/BabelDOC</a><br>
                     - GUI by: <a href="https://github.com/reycn">Rongxin</a><br>
                     - pdf2zh Version: {__version__} <br>
@@ -574,7 +575,7 @@ with gr.Blocks(
     head=demo_recaptcha if flag_demo else "",
 ) as demo:
     gr.Markdown(
-        "# [PDFMathTranslate @ GitHub](https://github.com/Byaidu/PDFMathTranslate)"
+        "# PDFMathTranslate — [fork](https://github.com/harveyzhang814/PDFMathTranslate) · [upstream](https://github.com/Byaidu/PDFMathTranslate)"
     )
 
     with gr.Row():

@@ -1,10 +1,13 @@
 name: Test and Release
+# NOTE: This workflow is disabled in this fork to prevent accidental publishing
+# to PyPI or Docker Hub under the upstream project's namespace.
+# Publishing is only intended for the upstream repo: Byaidu/PDFMathTranslate
 
 on:
+  workflow_dispatch: # manual trigger only — disabled from automatic runs
   push:
     branches:
-      - main
-      - master
+      - _disabled_main  # renamed to prevent automatic triggering
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

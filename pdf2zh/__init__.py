@@ -3,7 +3,7 @@ import logging
 log = logging.getLogger(__name__)
 
 __version__ = "1.9.11"
-__author__ = "Byaidu"
+__author__ = "Byaidu; fork maintained by harveyzhang814"
 __all__ = ["translate", "translate_stream"]
 
 

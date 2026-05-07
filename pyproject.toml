@@ -2,7 +2,10 @@
 name = "pdf2zh"
 version = "1.9.11"
 description = "Latex PDF Translator"
-authors = [{ name = "Byaidu", email = "byaidux@gmail.com" }]
+authors = [
+    { name = "Byaidu", email = "byaidux@gmail.com" },
+    { name = "harveyzhang814 (fork maintainer)", email = "harvey.zhang814@gmail.com" },
+]
 license = "AGPL-3.0"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -70,7 +73,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Byaidu/PDFMathTranslate"
+Homepage = "https://github.com/harveyzhang814/PDFMathTranslate"
+Upstream = "https://github.com/Byaidu/PDFMathTranslate"
 
 [build-system]
 requires = ["hatchling"]

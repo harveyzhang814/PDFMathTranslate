@@ -1,5 +1,11 @@
 <div align="center">
 
+> **此為 [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) 的個人 fork，新增了元素擷取、欄位排序與 Word 匯出等實驗性功能。穩定版請前往[上游倉庫](https://github.com/Byaidu/PDFMathTranslate)。**
+
+</div>
+
+<div align="center">
+
 [English](../README.md) | [简体中文](README_zh-CN.md) | 繁體中文 | [日本語](README_ja-JP.md)
 
 <img src="./images/banner.png" width="320px"  alt="PDF2ZH"/>  

@@ -1,4 +1,4 @@
-[**Documentation**](https://github.com/Byaidu/PDFMathTranslate) > **Advanced Usage** _(current)_
+[**Fork**](https://github.com/harveyzhang814/PDFMathTranslate) · [**Upstream**](https://github.com/Byaidu/PDFMathTranslate) > **Advanced Usage** _(current)_
 
 ---
 

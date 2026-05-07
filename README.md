@@ -1,50 +1,25 @@
 <div align="center">
-	<a href="https://go.warp.dev/PDFMathTranslate" target="_blank">
-		<sup>Special thanks to:</sup>
-		<br>
-		<img alt="Warp sponsorship" width="400" src="https://github.com/warpdotdev/brand-assets/blob/main/Github/Sponsor/Warp-Github-LG-02.png">
-		<br>
-		<h>Warp, built for coding with multiple AI agents</b>
-		<br>
-		<sup>Available for macOS, Linux and Windows</sup>
-	</a>
+
+> **This is a personal fork of [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate).**  
+> It adds experimental features for element extraction, column-aware reading order, and Word document export.  
+> For the stable release, please visit the [upstream repository](https://github.com/Byaidu/PDFMathTranslate).
+
 </div>
 
 <br>
 
 <div align="center">
 
-English | [简体中文](docs/README_zh-CN.md) | [繁體中文](docs/README_zh-TW.md) | [日本語](docs/README_ja-JP.md) | [한국어](docs/README_ko-KR.md)
-
 <img src="./docs/images/banner.png" width="320px"  alt="PDF2ZH"/>
 
 <h2 id="title">PDFMathTranslate</h2>
 
 <p>
-  <!-- PyPI -->
-  <a href="https://pypi.org/project/pdf2zh/">
-    <img src="https://img.shields.io/pypi/v/pdf2zh"></a>
-  <a href="https://pepy.tech/projects/pdf2zh">
-    <img src="https://static.pepy.tech/badge/pdf2zh"></a>
-  <a href="https://hub.docker.com/r/byaidu/pdf2zh">
-    <img src="https://img.shields.io/docker/pulls/byaidu/pdf2zh"></a>
-  <a href="https://hellogithub.com/repository/8ec2cfd3ef744762bf531232fa32bc47" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=8ec2cfd3ef744762bf531232fa32bc47&claim_uid=JQ0yfeBNjaTuqDU&theme=small" alt="Featured｜HelloGitHub" /></a>
-  <a href="https://gitcode.com/Byaidu/PDFMathTranslate/overview">
-    <img src="https://gitcode.com/Byaidu/PDFMathTranslate/star/badge.svg"></a>
-  <a href="https://huggingface.co/spaces/reycn/PDFMathTranslate-Docker">
-    <img src="https://img.shields.io/badge/%F0%9F%A4%97-Online%20Demo-FF9E0D"></a>
-  <a href="https://www.modelscope.cn/studios/AI-ModelScope/PDFMathTranslate">
-    <img src="https://img.shields.io/badge/ModelScope-Demo-blue"></a>
-  <a href="https://github.com/Byaidu/PDFMathTranslate/pulls">
-    <img src="https://img.shields.io/badge/contributions-welcome-green"></a>
-  <a href="https://t.me/+Z9_SgnxmsmA5NzBl">
-    <img src="https://img.shields.io/badge/Telegram-2CA5E0?style=flat-squeare&logo=telegram&logoColor=white"></a>
-  <!-- License -->
-  <a href="./LICENSE">
+  <a href="https://github.com/harveyzhang814/PDFMathTranslate/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/Byaidu/PDFMathTranslate"></a>
+  <a href="https://github.com/harveyzhang814/PDFMathTranslate/issues">
+    <img src="https://img.shields.io/badge/issues-welcome-green"></a>
 </p>
-
-<a href="https://trendshift.io/repositories/12424" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12424" alt="Byaidu%2FPDFMathTranslate | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
 </div>
 
@@ -55,6 +30,17 @@ Scientific PDF document translation preserving layouts.
 - 📊 Preserve formulas, charts, table of contents, and annotations.
 - 🌐 Support [multiple languages](#usage), and diverse [translation services](#usage).
 - 🤖 Provides [commandline tool](#usage), [interactive user interface](#install), and [Docker](#install)
+
+<h3 id="fork-features">1.1 Features added in this fork</h3>
+
+The following features are experimental additions on top of the upstream project:
+
+| Feature | Description | Option / API |
+| ------- | ----------- | ------------ |
+| **Element extraction** | Extract figures and tables from the PDF as separate image files | `--extract-elements` |
+| **Column-aware reading order** | Detect multi-column layouts and sort text blocks into the correct reading order before translation | automatic |
+| **Figure caption pairing** | Associate figure captions with their corresponding figure boxes for improved context | automatic |
+| **Word document export** | Export the translated result as a `.docx` file with embedded images and tables | automatic |
 
 <div align="center">
 <img src="./docs/images/preview.gif" width="80%"/>
@@ -159,7 +145,7 @@ See [documentation for GUI](./docs/README_GUI.md) for more details.
 <details>
   <summary>3.2.4 Application: On Windows</summary>
 
-1. Download pdf2zh-version-win64.zip from [release page](https://github.com/Byaidu/PDFMathTranslate/releases)
+1. Download pdf2zh-version-win64.zip from the [upstream release page](https://github.com/Byaidu/PDFMathTranslate/releases) (this fork does not publish Windows builds)
 
 2. Unzip and double-click `pdf2zh.exe` to run.
 
@@ -184,12 +170,15 @@ See [Zotero PDF2zh](https://github.com/guaguastandup/zotero-pdf2zh) for more det
 <details>
   <summary>3.2.6 Docker: Containerized Deployment</summary>
 
-1. Pull and run:
+1. Pull and run (upstream stable image):
 
    ```bash
    docker pull byaidu/pdf2zh
    docker run -d -p 7860:7860 byaidu/pdf2zh
    ```
+
+   > [!NOTE]
+   > This fork does not publish its own Docker image. The command above pulls the upstream stable image. To run this fork, build locally: `docker build -t pdf2zh-fork .`
 
 2. Open in browser:
 
@@ -197,8 +186,11 @@ See [Zotero PDF2zh](https://github.com/guaguastandup/zotero-pdf2zh) for more det
    http://localhost:7860/
    ```
 
-For docker deployment on cloud service:
+> [!NOTE]
+> The one-click cloud deploy buttons below are provided by the upstream project and will deploy the **upstream** repository, not this fork. Use them for reference only.
 
+<details>
+<summary>Upstream one-click cloud deploy (deploys Byaidu/PDFMathTranslate, not this fork)</summary>
 <div>
 <a href="https://www.heroku.com/deploy?template=https://github.com/Byaidu/PDFMathTranslate">
   <img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy" height="26"></a>
@@ -211,14 +203,7 @@ For docker deployment on cloud service:
 <a href="https://app.koyeb.com/deploy?type=git&builder=buildpack&repository=github.com/Byaidu/PDFMathTranslate&branch=main&name=pdf-math-translate">
   <img src="https://www.koyeb.com/static/images/deploy/button.svg" alt="Deploy to Koyeb" height="26"></a>
 </div>
-
-> [!TIP]
->
-> - If you cannot access Docker Hub, please try the image on [GitHub Container Registry](https://github.com/Byaidu/PDFMathTranslate/pkgs/container/pdfmathtranslate).
-> ```bash
-> docker pull ghcr.io/byaidu/pdfmathtranslate
-> docker run -d -p 7860:7860 ghcr.io/byaidu/pdfmathtranslate
-> ```
+</details>
 </details>
 
 <details>
@@ -246,7 +231,7 @@ For docker deployment on cloud service:
 
 ### 4.1 Advanced options
 
-Execute the translation command in the command line to generate the translated document `example-mono.pdf` and the bilingual document `example-dual.pdf` in the current working directory. Use Google as the default translation service. More support translation services can find [HERE](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#services).
+Execute the translation command in the command line to generate the translated document `example-mono.pdf` and the bilingual document `example-dual.pdf` in the current working directory. Use Google as the default translation service. More support translation services can find [HERE](./docs/ADVANCED.md#services).
 
 <img src="./docs/images/cmd.explained.png" width="580px"  alt="cmd"/>
 
@@ -257,28 +242,29 @@ In the following table, we list all advanced options for reference:
 | files                 | Local files                                                                                                   | `pdf2zh ~/local.pdf`                           |
 | links                 | Online files                                                                                                  | `pdf2zh http://arxiv.org/paper.pdf`            |
 | `-i`                  | [Enter GUI](#gui)                                                                                             | `pdf2zh -i`                                    |
-| `-p`                  | [Partial document translation](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#partial) | `pdf2zh example.pdf -p 1`                      |
-| `-li`                 | [Source language](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#languages)            | `pdf2zh example.pdf -li en`                    |
-| `-lo`                 | [Target language](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#languages)            | `pdf2zh example.pdf -lo zh`                    |
-| `-s`                  | [Translation service](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#services)         | `pdf2zh example.pdf -s deepl`                  |
-| `-t`                  | [Multi-threads](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#threads)                | `pdf2zh example.pdf -t 1`                      |
+| `-p`                  | [Partial document translation](./docs/ADVANCED.md#partial) | `pdf2zh example.pdf -p 1`                      |
+| `-li`                 | [Source language](./docs/ADVANCED.md#languages)            | `pdf2zh example.pdf -li en`                    |
+| `-lo`                 | [Target language](./docs/ADVANCED.md#languages)            | `pdf2zh example.pdf -lo zh`                    |
+| `-s`                  | [Translation service](./docs/ADVANCED.md#services)         | `pdf2zh example.pdf -s deepl`                  |
+| `-t`                  | [Multi-threads](./docs/ADVANCED.md#threads)                | `pdf2zh example.pdf -t 1`                      |
 | `-o`                  | Output dir                                                                                                    | `pdf2zh example.pdf -o output`                 |
-| `-f`, `-c`            | [Exceptions](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#exceptions)                | `pdf2zh example.pdf -f "(MS.*)"`               |
+| `-f`, `-c`            | [Exceptions](./docs/ADVANCED.md#exceptions)                | `pdf2zh example.pdf -f "(MS.*)"`               |
 | `-cp`                 | Compatibility Mode                                                                                            | `pdf2zh example.pdf --compatible`              |
-| `--skip-subset-fonts` | [Skip font subset](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#font-subset)         | `pdf2zh example.pdf --skip-subset-fonts`       |
-| `--ignore-cache`      | [Ignore translate cache](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#cache)         | `pdf2zh example.pdf --ignore-cache`            |
+| `--skip-subset-fonts` | [Skip font subset](./docs/ADVANCED.md#font-subset)         | `pdf2zh example.pdf --skip-subset-fonts`       |
+| `--ignore-cache`      | [Ignore translate cache](./docs/ADVANCED.md#cache)         | `pdf2zh example.pdf --ignore-cache`            |
 | `--share`             | Public link                                                                                                   | `pdf2zh -i --share`                            |
-| `--authorized`        | [Authorization](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#auth)                   | `pdf2zh -i --authorized users.txt [auth.html]` |
-| `--prompt`            | [Custom Prompt](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#prompt)                 | `pdf2zh --prompt [prompt.txt]`                 |
+| `--authorized`        | [Authorization](./docs/ADVANCED.md#auth)                   | `pdf2zh -i --authorized users.txt [auth.html]` |
+| `--prompt`            | [Custom Prompt](./docs/ADVANCED.md#prompt)                 | `pdf2zh --prompt [prompt.txt]`                 |
 | `--onnx`              | [Use Custom DocLayout-YOLO ONNX model]                                                                        | `pdf2zh --onnx [onnx/model/path]`              |
 | `--serverport`        | [Use Custom WebUI port]                                                                                       | `pdf2zh --serverport 7860`                     |
 | `--dir`               | [batch translate]                                                                                             | `pdf2zh --dir /path/to/translate/`             |
-| `--config`            | [configuration file](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#cofig)             | `pdf2zh --config /path/to/config/config.json`  |
+| `--config`            | [configuration file](./docs/ADVANCED.md#cofig)             | `pdf2zh --config /path/to/config/config.json`  |
 | `--serverport`        | [custom gradio server port]                                                                                   | `pdf2zh --serverport 7860`                     |
 | `--mode`              | Translation mode: `fast` (default, v1) or `precise` (v2, experimental, requires pdf2zh_next submodule)         | `pdf2zh --mode precise example.pdf`            |
 | `--babeldoc`          | Use Experimental backend [BabelDOC](https://funstory-ai.github.io/BabelDOC/) to translate                     | `pdf2zh --babeldoc` -s openai example.pdf      |
 | `--mcp`               | Enable MCP STDIO mode                                                                                         | `pdf2zh --mcp`                                 |
 | `--sse`               | Enable MCP SSE mode                                                                                           | `pdf2zh --mcp --sse`                           |
+| `--extract-elements`  | *(fork)* Extract figures and tables as separate image files alongside the translated PDF                      | `pdf2zh example.pdf --extract-elements`        |
 
 For detailed explanations, please refer to our document about [Advanced Usage](./docs/ADVANCED.md) for a full list of each option.
 
@@ -288,11 +274,13 @@ For downstream applications, please refer to our document about [API Details](./
 - [Python API](./docs/APIS.md#api-python), how to use the program in other Python programs
 - [HTTP API](./docs/APIS.md#api-http), how to communicate with a server with the program installed
 
-<h3 id="downstream">4.3 Differences between two major forks</h3>
+<h3 id="downstream">4.3 Notable forks</h3>
 
-- [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate): The present and the original project for stable release.
+- [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate): The upstream stable release.
 
 - [PDFMathTranslate/PDFMathTranslate-next](https://github.com/PDFMathTranslate/PDFMathTranslate-next): A fork with web-ui and additional features. This fork handles a large number of marginal cases, improves PDF compatibility, and optimizes cross-column and cross-page semantic consistency, dynamic scaling, and dynamic scaling consistency, among many other translation quality improvements. However, this fork is intended solely for development and does not address compatibility issues and is not designed for community-contributions.
+
+- [harveyzhang814/PDFMathTranslate](https://github.com/harveyzhang814/PDFMathTranslate) *(this fork)*: Adds element extraction (`--extract-elements`), column-aware reading order, figure caption pairing, and Word document export on top of the stable upstream release.
 
 <h2 id="information">5. Project Information</h2>
 <h3 id="citation">5.1 Citation</h3>
@@ -346,21 +334,4 @@ Citation:
 
 <h3 id="contrib">5.3 Contributors</h3>
 
-<a href="https://github.com/Byaidu/PDFMathTranslate/graphs/contributors">
-  <img src="https://opencollective.com/PDFMathTranslate/contributors.svg?width=890&button=false" />
-</a>
-
-![Alt](https://repobeats.axiom.co/api/embed/dfa7583da5332a11468d686fbd29b92320a6a869.svg "Repobeats analytics image")
-
-For details on how to contribute, please consult the [Contribution Guide](https://github.com/Byaidu/PDFMathTranslate/wiki/Contribution-Guide---%E8%B4%A1%E7%8C%AE%E6%8C%87%E5%8D%97).
-
-
-<h3 id="star_hist">5.4 Star History</h3>
-
-<a href="https://star-history.com/#Byaidu/PDFMathTranslate&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Byaidu/PDFMathTranslate&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Byaidu/PDFMathTranslate&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Byaidu/PDFMathTranslate&type=Date"/>
- </picture>
-</a>
+This is a personal fork. For the full contributor list, see the [upstream repository](https://github.com/Byaidu/PDFMathTranslate/graphs/contributors).

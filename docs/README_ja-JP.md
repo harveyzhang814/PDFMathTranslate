@@ -1,5 +1,11 @@
 <div align="center">
 
+> **これは [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) の個人フォークです。要素抽出・カラムレイアウト対応・Word エクスポートなどの実験的機能を追加しています。安定版は[上流リポジトリ](https://github.com/Byaidu/PDFMathTranslate)をご利用ください。**
+
+</div>
+
+<div align="center">
+
 [English](../README.md) | [简体中文](README_zh-CN.md) | [繁體中文](README_zh-TW.md) | 日本語
 
 <img src="./images/banner.png" width="320px"  alt="PDF2ZH"/>  
