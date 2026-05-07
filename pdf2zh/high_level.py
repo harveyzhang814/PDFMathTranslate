@@ -200,10 +200,11 @@ def translate_patch(
                     if cls_name not in ("figure", "table"):
                         continue
                     x0, y0, x1, y1 = d.xyxy.squeeze()
+                    # DocLayout xyxy and numpy image both use y=0 at top; no flip needed.
                     slice_x0 = int(np.clip(int(x0 - 1), 0, pix_w))
                     slice_x1 = int(np.clip(int(x1 + 1), 0, pix_w))
-                    slice_y0 = int(np.clip(int(pix_h - y1 - 1), 0, pix_h))
-                    slice_y1 = int(np.clip(int(pix_h - y0 + 1), 0, pix_h))
+                    slice_y0 = int(np.clip(int(y0 - 1), 0, pix_h))
+                    slice_y1 = int(np.clip(int(y1 + 1), 0, pix_h))
                     if slice_x1 <= slice_x0 or slice_y1 <= slice_y0:
                         continue
                     extract_counter[cls_name] += 1

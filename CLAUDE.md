@@ -88,6 +88,7 @@ CLI (pdf2zh.py)
 | Figure–caption proximity pairing; manifest generation | `pdf2zh/caption_pairing.py` | `test/test_caption_pairing.py` |
 | Kernel registry, CLI→kernel routing, translation pipeline | `pdf2zh/kernel/` | `test/test_kernel.py` |
 | Translators (cache, OpenAI-like, Ollama) | `pdf2zh/translator.py` | `test/test_translator.py` |
+| Figure/table crop coordinate logic (no y-flip) | `pdf2zh/high_level.py` | `test/test_element_extraction.py` |
 
 **No tests yet:** `text_order.py`, `high_level.py` (integration), `converter_docx.py`
 
