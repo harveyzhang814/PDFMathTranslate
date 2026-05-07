@@ -546,6 +546,7 @@ def translate_to_word(
     model=None,
     pages: Optional[List[int]] = None,
     skip_subset_fonts: bool = True,
+    keep_pdf: bool = False,
     **kwargs,
 ) -> str:
     """
@@ -560,22 +561,27 @@ def translate_to_word(
         thread: number of threads (0=auto)
         model: layout model (OnnxModel instance)
         pages: optional page list to translate
+        keep_pdf: if True, keep the intermediate mono/dual PDFs in output dir;
+                  if False (default), they are deleted after the .docx is written
 
     Returns:
         Path to the generated .docx file
     """
+    import shutil
+
     if not output:
         output = tempfile.mkdtemp(prefix="pdf2zh_word_")
     output_path = Path(output)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Temp dir for extracted elements — lives until export completes
-    elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+    # Intermediate PDFs go to a temp dir unless the caller wants to keep them
+    pdf_dir = output_path if keep_pdf else Path(tempfile.mkdtemp(prefix="pdf2zh_pdf_"))
+    elem_dir = Path(tempfile.mkdtemp(prefix="pdf2zh_elem_"))
     try:
         # Step 1: translate with element extraction
         result = translate(
             files=files,
-            output=str(output_path),
+            output=str(pdf_dir),
             lang_in=lang_in,
             lang_out=lang_out,
             service=service,
@@ -583,17 +589,19 @@ def translate_to_word(
             model=model,
             pages=pages,
             extract_elements=True,
-            elements_output_dir=elem_dir,
+            elements_output_dir=str(elem_dir),
             skip_subset_fonts=skip_subset_fonts,
         )
 
         mono_pdf = result[0][0]
 
         # Step 2: export to Word (uses elem_dir before we clean up)
-        docx_path = str(output_path / f"{Path(mono_pdf).stem}.docx")
-        export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out, pages=pages)
+        stem = Path(mono_pdf).stem
+        docx_path = str(output_path / f"{stem}.docx")
+        export_pdf_to_word(mono_pdf, str(elem_dir), docx_path, lang_out=lang_out, pages=pages)
     finally:
-        import shutil
-        shutil.rmtree(elem_dir, ignore_errors=True)
+        shutil.rmtree(str(elem_dir), ignore_errors=True)
+        if not keep_pdf:
+            shutil.rmtree(str(pdf_dir), ignore_errors=True)
 
     return docx_path
