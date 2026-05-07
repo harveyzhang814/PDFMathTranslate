@@ -122,11 +122,18 @@ def _should_include(text: str, lang_out: str) -> bool:
     return bool(_HAS_CJK.search(text))
 
 
-# Keywords that identify a caption block
-CAPTION_KEYWORDS = [
-    "fig", "figure", "table", "panel",
-    "表", "图", "fig.", "panel a", "panel b",
-]
+# Caption detection: text must START with one of these patterns.
+# Using start-anchor regexes prevents false positives like "超声心动图" matching "图".
+_CAPTION_RE = re.compile(
+    r'^(?:'
+    r'fig\.?\s*\d'           # Fig 1 / Fig. 1
+    r'|figure\s*\d'          # Figure 1
+    r'|table\s*\d'           # Table 1
+    r'|panel\s*[a-z\d]'      # Panel A / Panel 1
+    r'|[图表]\s*\d'           # 图1 / 表1
+    r')',
+    re.IGNORECASE,
+)
 
 
 def _extract_page_text_blocks(page: pymupdf.Page) -> List[dict]:
@@ -247,12 +254,9 @@ def export_pdf_to_word(
             if not text or not _should_include(text, lang_out):
                 continue
 
-            # Check if this block is a caption
-            is_caption = (
-                len(text) < 300
-                and not text.endswith(".")
-                and any(kw in text.lower() for kw in CAPTION_KEYWORDS)
-            )
+            # Caption blocks start with "Fig N", "Table N", "图N", "表N", etc.
+            # Require a leading pattern so body text containing "图" is not misidentified.
+            is_caption = len(text) < 300 and bool(_CAPTION_RE.match(text))
 
             if is_caption:
                 # Find the spatially nearest figure image for this caption
