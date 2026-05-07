@@ -546,7 +546,7 @@ def translate_to_word(
     model=None,
     pages: Optional[List[int]] = None,
     skip_subset_fonts: bool = True,
-    keep_pdf: bool = False,
+    keep_pdf: bool = True,
     **kwargs,
 ) -> str:
     """
