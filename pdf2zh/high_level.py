@@ -23,7 +23,7 @@ from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFResourceManager
 from pdfminer.pdfpage import PDFPage
 from pdfminer.pdfparser import PDFParser
-from pymupdf import Document, Font
+from pymupdf import Document, Font, Rect as MuRect
 
 from pdf2zh.converter import TranslateConverter
 from pdf2zh.doclayout import OnnxModel
@@ -118,6 +118,9 @@ def translate_patch(
     else:
         total_pages = doc_zh.page_count
 
+    all_figure_boxes: list = []
+    all_caption_boxes: list = []
+
     parser = PDFParser(inf)
     doc = PDFDocument(parser)
     with tqdm.tqdm(total=total_pages) as progress:
@@ -142,6 +145,7 @@ def translate_patch(
             caption_data = {}  # {(pageno, type, idx): text}
             elem_counter = {"figure": 0, "table": 0}
 
+            page_caption_boxes = []
             for d in page_layout.boxes:
                 cls_name = page_layout.names[int(d.cls)]
                 if cls_name == "table":
@@ -152,9 +156,21 @@ def translate_patch(
                     idx = elem_counter["figure"]
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     figure_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "idx": idx, "pageno": pageno})
-                # elif cls_name == "figure_caption":
-                    # caption pairing temporarily disabled - requires pymupdf page access
-                    pass
+                elif cls_name == "figure_caption":
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    page_caption_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "pageno": pageno})
+
+            # Extract caption text from original page via pymupdf
+            if page_caption_boxes:
+                mupdf_page = doc_zh[pageno]
+                sx = mupdf_page.rect.width / pix.width if pix.width else 1.0
+                sy = mupdf_page.rect.height / pix.height if pix.height else 1.0
+                for cap in page_caption_boxes:
+                    clip = MuRect(cap["x0"] * sx, cap["y0"] * sy, cap["x1"] * sx, cap["y1"] * sy)
+                    cap["text"] = mupdf_page.get_text("text", clip=clip).strip()
+                all_caption_boxes.extend(page_caption_boxes)
+
+            all_figure_boxes.extend(figure_boxes)
 
 
             # ---- Extract figures and tables as separate images ----
@@ -217,6 +233,13 @@ def translate_patch(
             interpreter.process_page(page)
 
     device.close()
+
+    # Build element manifest after all pages are processed
+    if extract_elements and elements_output_dir and all_figure_boxes:
+        from pdf2zh.caption_pairing import pair_figure_caption, build_element_manifest
+        pairings = pair_figure_caption(all_figure_boxes, all_caption_boxes)
+        build_element_manifest(pairings, elements_output_dir)
+
     return obj_patch
 
 

@@ -129,12 +129,10 @@ def export_pdf_to_word(
                 img_path = os.path.join(elements_subdir, ef)
                 label = _make_caption_label(ef)
                 _add_image_to_doc(doc, img_path, label)
-            doc_mono.close()
-            doc.save(output_docx_path)
-            return output_docx_path
+            continue
 
         avg_w = np.mean([max(b["x1"] - b["x0"], 1) for b in blocks])
-        sort_text_blocks_by_layout(blocks, page.rect.width, page.rect.height, avg_w)
+        blocks = sort_text_blocks_by_layout(blocks, page.rect.width, page.rect.height, avg_w)
 
         for block in blocks:
             text = block["content"]
