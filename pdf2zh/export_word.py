@@ -110,6 +110,21 @@ def _sanitize(text: str) -> str:
     return _XML_INVALID.sub("", text)
 
 
+def _join_pdf_lines(text: str) -> str:
+    """Collapse PDF visual line-breaks into spaces.
+
+    pymupdf preserves the newline at each visual line boundary inside a block.
+    Three cases:
+      • hyphenated break  "word-\\nrest"  → "wordrest"
+      • mid-word break    "AT\\nR"        → "ATR"   (e.g. column-split acronyms)
+      • normal break      "foo\\nbar"     → "foo bar"
+    """
+    text = re.sub(r"-\n", "", text)                          # de-hyphenate
+    text = re.sub(r"(?<=[^\s])\n(?=[^\s])", "", text)        # mid-word
+    text = text.replace("\n", " ")
+    return re.sub(r" {2,}", " ", text).strip()
+
+
 def _should_include(text: str, lang_out: str) -> bool:
     """Return False for untranslated blocks when output language is CJK.
 
@@ -250,7 +265,7 @@ def export_pdf_to_word(
         blocks = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in sorted_flipped]
 
         for block in blocks:
-            text = _sanitize(block["content"])
+            text = _join_pdf_lines(_sanitize(block["content"]))
             if not text or not _should_include(text, lang_out):
                 continue
 
