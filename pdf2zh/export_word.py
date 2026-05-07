@@ -255,23 +255,22 @@ def export_pdf_to_word(
             )
 
             if is_caption:
-                _add_caption_para(doc, text)
-
                 # Find the spatially nearest figure image for this caption
                 matched = _find_nearest_figure(block, page_figures, used_figures)
                 if matched:
+                    # Image first, caption below (standard academic convention)
                     fig_i, image_file = matched
                     used_figures.add(fig_i)
-                    # Remove from elem_by_idx so end-of-page dump doesn't re-insert it
                     parsed = _parse_elem_filename(image_file)
                     if parsed:
                         elem_by_idx.pop((parsed["type"], parsed["idx"]), None)
                     img_path = os.path.join(elements_subdir, image_file)
                     if os.path.exists(img_path):
-                        # Caption was already added above; pass empty label to avoid duplication
                         _add_image_to_doc(doc, img_path, "")
+                    _add_caption_para(doc, text)
                 else:
-                    # Fallback: sequential counter for non-figure captions (tables)
+                    # Fallback: caption first for tables (standard table convention)
+                    _add_caption_para(doc, text)
                     for elem_type in ["figure", "table"]:
                         k = (elem_type, next_elem_idx[elem_type])
                         if k in elem_by_idx:
