@@ -90,3 +90,15 @@ CLI (pdf2zh.py)
 | Translators (cache, OpenAI-like, Ollama) | `pdf2zh/translator.py` | `test/test_translator.py` |
 
 **No tests yet:** `text_order.py`, `high_level.py` (integration), `converter_docx.py`
+
+## E2E 测试样本
+
+```
+test/
+  file/            # 单元测试用轻量 PDF（已有）
+  e2e/
+    fixtures/      # 输入样本（论文 PDF 等）
+    expected/      # 期望输出，用于快照对比（可选）
+```
+
+`test/file/` 和 `test/e2e/` 下的 `.pdf` / `.docx` 已在 `.gitignore` 中加例外，可以直接 commit。
