@@ -19,6 +19,15 @@ from .text_order import sort_text_blocks_by_layout
 
 logger = logging.getLogger(__name__)
 
+# XML 1.0 only allows: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+_XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
+
+
+def _sanitize(text: str) -> str:
+    """Strip characters that are illegal in XML 1.0 (used by .docx)."""
+    return _XML_INVALID.sub("", text)
+
+
 # Keywords that identify a caption block
 CAPTION_KEYWORDS = [
     "fig", "figure", "table", "panel",
@@ -135,7 +144,7 @@ def export_pdf_to_word(
         blocks = sort_text_blocks_by_layout(blocks, page.rect.width, page.rect.height, avg_w)
 
         for block in blocks:
-            text = block["content"]
+            text = _sanitize(block["content"])
             if not text:
                 continue
 
