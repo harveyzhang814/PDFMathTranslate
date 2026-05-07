@@ -17,6 +17,7 @@ import requests
 import tqdm
 
 from pdf2zh.converter_docx import convert_to_pdf, is_convertible
+from pdf2zh.export_word import export_pdf_to_word
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFResourceManager
@@ -87,6 +88,8 @@ def translate_patch(
     envs: Dict = None,
     prompt: Template = None,
     ignore_cache: bool = False,
+    extract_elements: bool = False,
+    elements_output_dir: str = None,
     **kwarg: Any,
 ) -> None:
     rsrcmgr = PDFResourceManager()
@@ -132,6 +135,55 @@ def translate_patch(
                 pix.height, pix.width, 3
             )[:, :, ::-1]
             page_layout = model.predict(image, imgsz=int(pix.height / 32) * 32)[0]
+
+            # ---- Collect element boxes for layout analysis and caption pairing ----
+            figure_boxes = []
+            table_boxes = []
+            caption_data = {}  # {(pageno, type, idx): text}
+            elem_counter = {"figure": 0, "table": 0}
+
+            for d in page_layout.boxes:
+                cls_name = page_layout.names[int(d.cls)]
+                if cls_name == "table":
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    table_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1)})
+                elif cls_name == "figure":
+                    elem_counter["figure"] += 1
+                    idx = elem_counter["figure"]
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    figure_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "idx": idx, "pageno": pageno})
+                # elif cls_name == "figure_caption":
+                    # caption pairing temporarily disabled - requires pymupdf page access
+                    pass
+
+
+            # ---- Extract figures and tables as separate images ----
+            if extract_elements and elements_output_dir:
+                from PIL import Image
+                elem_dir = os.path.join(elements_output_dir, "elements")
+                os.makedirs(elem_dir, exist_ok=True)
+                extract_counter = {"figure": 0, "table": 0}
+                pix_h, pix_w = pix.height, pix.width
+                img_h, img_w = image.shape[:2]
+                assert pix_h == img_h and pix_w == img_w
+                for d in page_layout.boxes:
+                    cls_name = page_layout.names[int(d.cls)]
+                    if cls_name not in ("figure", "table"):
+                        continue
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    slice_x0 = int(np.clip(int(x0 - 1), 0, pix_w))
+                    slice_x1 = int(np.clip(int(x1 + 1), 0, pix_w))
+                    slice_y0 = int(np.clip(int(pix_h - y1 - 1), 0, pix_h))
+                    slice_y1 = int(np.clip(int(pix_h - y0 + 1), 0, pix_h))
+                    if slice_x1 <= slice_x0 or slice_y1 <= slice_y0:
+                        continue
+                    extract_counter[cls_name] += 1
+                    crop_bgr = image[slice_y0:slice_y1, slice_x0:slice_x1]
+                    crop_rgb = crop_bgr[:, :, ::-1]
+                    pil_img = Image.fromarray(crop_rgb.astype("uint8"), "RGB")
+                    fname = f"p{pageno+1}_{cls_name}_{extract_counter[cls_name]:03d}.png"
+                    pil_img.save(os.path.join(elem_dir, fname))
+
             # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
@@ -184,6 +236,8 @@ def translate_stream(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    extract_elements: bool = False,
+    elements_output_dir: str = None,
     **kwarg: Any,
 ):
     font_list = [("tiro", None)]
@@ -319,6 +373,8 @@ def translate(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    extract_elements: bool = False,
+    elements_output_dir: str = None,
     **kwarg: Any,
 ):
     if not files:
@@ -433,3 +489,66 @@ def download_remote_fonts(lang: str):
     logger.info(f"use font: {font_path}")
 
     return font_path
+
+
+def translate_to_word(
+    files: List[str],
+    output: str = "",
+    lang_in: str = "en",
+    lang_out: str = "zh",
+    service: str = "google",
+    thread: int = 0,
+    model=None,
+    pages: Optional[List[int]] = None,
+    skip_subset_fonts: bool = True,
+    **kwargs,
+) -> str:
+    """
+    Translate PDF files and export as a Word document with images and tables.
+
+    Args:
+        files: list of input PDF paths
+        output: output directory
+        lang_in: source language
+        lang_out: target language
+        service: translation service (e.g. "google", "ollama:gemma2:9b")
+        thread: number of threads (0=auto)
+        model: layout model (OnnxModel instance)
+        pages: optional page list to translate
+
+    Returns:
+        Path to the generated .docx file
+    """
+    if not output:
+        output = tempfile.mkdtemp(prefix="pdf2zh_word_")
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Temp dir for extracted elements — lives until export completes
+    elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+    try:
+        # Step 1: translate with element extraction
+        result = translate(
+            files=files,
+            output=str(output_path),
+            lang_in=lang_in,
+            lang_out=lang_out,
+            service=service,
+            thread=thread,
+            model=model,
+            pages=pages,
+            extract_elements=True,
+            elements_output_dir=elem_dir,
+            skip_subset_fonts=skip_subset_fonts,
+        )
+
+        mono_pdf = result[0][0]
+
+        # Step 2: export to Word (uses elem_dir before we clean up)
+        docx_path = str(output_path / f"{Path(mono_pdf).stem}.docx")
+        export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out)
+    finally:
+        import shutil
+        shutil.rmtree(elem_dir, ignore_errors=True)
+
+    return docx_path

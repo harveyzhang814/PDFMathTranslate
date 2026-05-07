@@ -27,6 +27,8 @@ class TranslateRequest:
     skip_subset_fonts: bool = False
     ignore_cache: bool = False
     compatible: bool = False
+    extract_elements: bool = False
+    elements_output_dir: str = ""
 
 
 @dataclass
