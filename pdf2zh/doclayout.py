@@ -7,6 +7,48 @@ import numpy as np
 import ast
 from babeldoc.assets.assets import get_doclayout_onnx_model_path
 
+
+def _nms(preds: np.ndarray, iou_threshold: float = 0.45) -> np.ndarray:
+    """Class-specific Non-Maximum Suppression for YOLO predictions.
+
+    preds: (N, 6+) where columns are [x1,y1,x2,y2,...,conf,cls].
+    Boxes of the same class with IoU > iou_threshold are suppressed,
+    keeping the one with higher confidence.
+    """
+    if len(preds) == 0:
+        return preds
+
+    # Sort by confidence descending (second-to-last column)
+    order = np.argsort(preds[:, -2])[::-1]
+    preds = preds[order]
+
+    suppressed = np.zeros(len(preds), dtype=bool)
+    keep = []
+
+    x1, y1, x2, y2 = preds[:, 0], preds[:, 1], preds[:, 2], preds[:, 3]
+    areas = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
+
+    for i in range(len(preds)):
+        if suppressed[i]:
+            continue
+        keep.append(i)
+        cls_i = preds[i, -1]
+        # Vectorised IoU against remaining boxes of the same class
+        same_cls = (preds[:, -1] == cls_i) & (~suppressed)
+        same_cls[i] = False
+        if not same_cls.any():
+            continue
+        ix1 = np.maximum(x1[i], x1[same_cls])
+        iy1 = np.maximum(y1[i], y1[same_cls])
+        ix2 = np.minimum(x2[i], x2[same_cls])
+        iy2 = np.minimum(y2[i], y2[same_cls])
+        inter = np.maximum(0, ix2 - ix1) * np.maximum(0, iy2 - iy1)
+        iou = inter / (areas[i] + areas[same_cls] - inter + 1e-9)
+        idx = np.where(same_cls)[0]
+        suppressed[idx[iou > iou_threshold]] = True
+
+    return preds[keep]
+
 try:
     import onnx
     import onnxruntime
@@ -213,6 +255,7 @@ class OnnxModel(DocLayoutModel):
 
         # Postprocess predictions
         preds = preds[preds[..., 4] > 0.25]
+        preds = _nms(preds)
         preds[..., :4] = self.scale_boxes(
             (new_h, new_w), preds[..., :4], (orig_h, orig_w)
         )
