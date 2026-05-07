@@ -569,7 +569,7 @@ def translate_to_word(
 
         # Step 2: export to Word (uses elem_dir before we clean up)
         docx_path = str(output_path / f"{Path(mono_pdf).stem}.docx")
-        export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out)
+        export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out, pages=pages)
     finally:
         import shutil
         shutil.rmtree(elem_dir, ignore_errors=True)

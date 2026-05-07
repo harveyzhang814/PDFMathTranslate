@@ -22,10 +22,28 @@ logger = logging.getLogger(__name__)
 # XML 1.0 only allows: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
 _XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
+# CJK languages whose translated blocks must contain at least one CJK character
+_CJK_LANGS = {"zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "ja", "ko"}
+
+# Unicode ranges covering CJK Unified Ideographs and common CJK extensions
+_HAS_CJK = re.compile(r"[⺀-鿿豈-﫿︰-﹏]")
+
 
 def _sanitize(text: str) -> str:
     """Strip characters that are illegal in XML 1.0 (used by .docx)."""
     return _XML_INVALID.sub("", text)
+
+
+def _should_include(text: str, lang_out: str) -> bool:
+    """Return False for untranslated blocks when output language is CJK.
+
+    Tables and abandon regions are masked during translation and keep their
+    original language.  Filter them out so only translated text appears in the
+    Word document.
+    """
+    if lang_out.lower() not in _CJK_LANGS:
+        return True
+    return bool(_HAS_CJK.search(text))
 
 
 # Keywords that identify a caption block
@@ -81,6 +99,7 @@ def export_pdf_to_word(
     elem_dir: Optional[str],
     output_docx_path: str,
     lang_out: str = "zh",
+    pages: Optional[List[int]] = None,
 ) -> str:
     """
     Convert translated mono PDF + extracted elements → .docx file.
@@ -110,6 +129,8 @@ def export_pdf_to_word(
     )
 
     for pageno, page in enumerate(doc_mono):
+        if pages is not None and pageno not in pages:
+            continue
         # Page heading
         doc.add_heading(f"Page {pageno + 1}", level=2)
 
@@ -145,7 +166,7 @@ def export_pdf_to_word(
 
         for block in blocks:
             text = _sanitize(block["content"])
-            if not text:
+            if not text or not _should_include(text, lang_out):
                 continue
 
             # Check if this block is a caption
