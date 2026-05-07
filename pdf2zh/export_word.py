@@ -19,6 +19,16 @@ from .text_order import sort_text_blocks_by_layout
 
 logger = logging.getLogger(__name__)
 
+# ── Formatting constants ────────────────────────────────────────────────────
+_FONT_BODY = "宋体"
+_FONT_HEADING = "黑体"
+_FONT_CAPTION = "仿宋"
+_SIZE_BODY = 12        # pt
+_SIZE_HEADING = 14     # pt
+_SIZE_CAPTION = 10     # pt
+# 240 = single, 360 = 1.5×, 480 = double (Word line units: twips/240)
+_LINE_SPACING = 360
+
 # XML 1.0 only allows: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
 _XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
@@ -27,6 +37,72 @@ _CJK_LANGS = {"zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "ja", "ko"}
 
 # Unicode ranges covering CJK Unified Ideographs and common CJK extensions
 _HAS_CJK = re.compile(r"[⺀-鿿豈-﫿︰-﹏]")
+
+
+def _set_cjk_font(run, font_name: str) -> None:
+    """Set both the Latin and CJK (eastAsia) font on a run via OOXML."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.insert(0, rFonts)
+    rFonts.set(qn("w:eastAsia"), font_name)
+    rFonts.set(qn("w:hAnsi"), font_name)
+
+
+def _set_para_line_spacing(para) -> None:
+    """Apply 1.5× line spacing to a paragraph via OOXML."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    pPr = para._p.get_or_add_pPr()
+    for child in list(pPr):
+        if child.tag == qn("w:spacing"):
+            pPr.remove(child)
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:line"), str(_LINE_SPACING))
+    spacing.set(qn("w:lineRule"), "auto")
+    pPr.append(spacing)
+
+
+def _add_body_para(doc, text: str):
+    """Add a left-aligned body paragraph in 宋体 12pt with 1.5× line spacing."""
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    _set_para_line_spacing(p)
+    run = p.add_run(text)
+    run.font.name = _FONT_BODY
+    run.font.size = Pt(_SIZE_BODY)
+    _set_cjk_font(run, _FONT_BODY)
+    return p
+
+
+def _add_caption_para(doc, text: str):
+    """Add a centred italic caption paragraph in 仿宋 10pt grey."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(text)
+    run.font.name = _FONT_CAPTION
+    run.font.size = Pt(_SIZE_CAPTION)
+    run.italic = True
+    run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+    _set_cjk_font(run, _FONT_CAPTION)
+    return p
+
+
+def _style_heading(heading) -> None:
+    """Apply 黑体 14pt bold styling to a heading paragraph's runs."""
+    from docx.shared import Pt
+    for run in heading.runs:
+        run.font.name = _FONT_HEADING
+        run.font.size = Pt(_SIZE_HEADING)
+        run.bold = True
+        _set_cjk_font(run, _FONT_HEADING)
 
 
 def _sanitize(text: str) -> str:
@@ -71,9 +147,8 @@ def _parse_elem_filename(fname: str) -> Optional[dict]:
 
 
 def _add_image_to_doc(doc, img_path: str, caption: str) -> None:
-    """Add an image and its caption to the document."""
-    from docx import Document
-    from docx.shared import Inches, Pt, RGBColor
+    """Add a centred image and an optional caption paragraph."""
+    from docx.shared import Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     p = doc.add_paragraph()
@@ -86,12 +161,7 @@ def _add_image_to_doc(doc, img_path: str, caption: str) -> None:
         return
 
     if caption:
-        cap_p = doc.add_paragraph()
-        cap_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        cap_run = cap_p.add_run(caption)
-        cap_run.italic = True
-        cap_run.font.size = Pt(9)
-        cap_run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        _add_caption_para(doc, caption)
 
 
 def export_pdf_to_word(
@@ -115,8 +185,6 @@ def export_pdf_to_word(
     """
     try:
         from docx import Document
-        from docx.shared import Pt, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
     except ImportError:
         raise RuntimeError("python-docx not installed. Run: pip install python-docx")
 
@@ -135,7 +203,7 @@ def export_pdf_to_word(
         if pages is not None and pageno not in pages:
             continue
         # Page heading
-        doc.add_heading(f"Page {pageno + 1}", level=2)
+        _style_heading(doc.add_heading(f"Page {pageno + 1}", level=2))
 
         # Load image files for this page
         elem_files: List[str] = []
@@ -187,13 +255,7 @@ def export_pdf_to_word(
             )
 
             if is_caption:
-                # Add caption text first
-                p = doc.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = p.add_run(text)
-                run.italic = True
-                run.font.size = Pt(9)
-                run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+                _add_caption_para(doc, text)
 
                 # Find the spatially nearest figure image for this caption
                 matched = _find_nearest_figure(block, page_figures, used_figures)
@@ -219,9 +281,7 @@ def export_pdf_to_word(
                             _add_image_to_doc(doc, img_path, _make_caption_label(ef))
                             break
             else:
-                # Regular paragraph
-                p = doc.add_paragraph(text)
-                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                _add_body_para(doc, text)
 
         # After all text blocks, dump any remaining images (no caption found)
         for (elem_type, idx), ef in sorted(elem_by_idx.items()):
