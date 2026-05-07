@@ -36,8 +36,6 @@ NOTO_NAME = "noto"
 
 logger = logging.getLogger(__name__)
 
-
-
 noto_list = [
     "am",  # Amharic
     "ar",  # Arabic
