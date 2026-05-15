@@ -163,6 +163,18 @@ class BaseTranslator:
         ) + self.get_rich_text_right_placeholder(id)
 
 
+class IdentityTranslator(BaseTranslator):
+    name = "identity"
+
+    def __init__(self, lang_in: str, lang_out: str, model: str, ignore_cache: bool):
+        super().__init__(lang_in, lang_out, model, ignore_cache)
+        # No cache needed for identity
+        self.cache = TranslationCache(self.name, {})
+
+    def do_translate(self, text: str) -> str:
+        return text
+
+
 class GoogleTranslator(BaseTranslator):
     name = "google"
     lang_map = {"zh": "zh-CN"}
