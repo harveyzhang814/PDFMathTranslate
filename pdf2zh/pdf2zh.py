@@ -229,6 +229,12 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parse_params.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Export translated content as Markdown with images in images/ subfolder.",
+    )
+
+    parse_params.add_argument(
         "--mcp", action="store_true", help="Launch pdf2zh MCP server in STDIO mode"
     )
 
@@ -428,6 +434,40 @@ def main(args: Optional[List[str]] = None) -> int:
                     mono.unlink(missing_ok=True)
                     if results[0].dual_pdf:
                         Path(results[0].dual_pdf).unlink(missing_ok=True)
+            finally:
+                shutil.rmtree(elem_dir, ignore_errors=True)
+    elif parsed_args.markdown:
+        from pdf2zh.export_markdown import export_pdf_to_markdown
+        for file in parsed_args.files:
+            elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+            try:
+                request = TranslateRequest(
+                    files=[file],
+                    output=parsed_args.output,
+                    pages=parsed_args.pages,
+                    lang_in=parsed_args.lang_in,
+                    lang_out=parsed_args.lang_out,
+                    service=parsed_args.service,
+                    thread=parsed_args.thread,
+                    vfont=parsed_args.vfont,
+                    vchar=parsed_args.vchar,
+                    envs={},
+                    prompt=prompt_text,
+                    skip_subset_fonts=parsed_args.skip_subset_fonts,
+                    ignore_cache=parsed_args.ignore_cache,
+                    compatible=parsed_args.compatible,
+                    debug=parsed_args.debug,
+                    extract_elements=True,
+                    elements_output_dir=elem_dir,
+                )
+                results = kernel.translate(request)
+                mono = Path(results[0].mono_pdf)
+                out_dir = Path(parsed_args.output) if parsed_args.output else mono.parent
+                task_dir = str(out_dir / mono.stem)
+                md_path = export_pdf_to_markdown(
+                    str(mono), elem_dir, task_dir, lang_out=parsed_args.lang_out,
+                )
+                print(f"Markdown saved: {md_path}")
             finally:
                 shutil.rmtree(elem_dir, ignore_errors=True)
     else:

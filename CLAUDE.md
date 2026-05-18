@@ -27,6 +27,9 @@ pdf2zh document.pdf -s google -o ./output
 # Word export (uses --extract-elements internally)
 pdf2zh document.pdf --word -o ./output
 
+# Markdown export (uses --extract-elements internally)
+pdf2zh document.pdf --markdown -o ./output
+
 # Lint
 flake8 pdf2zh/
 ```
@@ -71,6 +74,7 @@ CLI (pdf2zh.py)
 | `text_order.py` | Column layout detection (`detect_column_layout`) and reading-order sort (`sort_text_blocks_by_layout`) |
 | `caption_pairing.py` | Proximity-based figure↔caption matching; writes `elements/manifest.json` |
 | `export_word.py` | Builds `.docx` from translated mono.pdf + extracted element images |
+| `export_markdown.py` | Builds `.md` from translated mono.pdf + extracted element images; images in `images/` subfolder with Obsidian wikilinks |
 | `converter_docx.py` | Converts `.doc`/`.docx` input files to PDF before translation |
 
 **Kernel system (`pdf2zh/kernel/`):**
@@ -88,6 +92,7 @@ CLI (pdf2zh.py)
 | PDF converter (char rendering, paragraph parsing, formulas) | `pdf2zh/converter.py` | `test/test_converter.py` |
 | DocLayout ONNX model (predict, resize, scale) | `pdf2zh/doclayout.py` | `test/test_doclayout.py` |
 | Word export (reading-order sort, multi-page handling) | `pdf2zh/export_word.py` | `test/test_export_word.py` |
+| Markdown export (reading-order sort, image wikilinks, page separators) | `pdf2zh/export_markdown.py` | `test/test_export_markdown.py` |
 | Figure–caption proximity pairing; manifest generation | `pdf2zh/caption_pairing.py` | `test/test_caption_pairing.py` |
 | Kernel registry, CLI→kernel routing, translation pipeline | `pdf2zh/kernel/` | `test/test_kernel.py` |
 | Translators (cache, OpenAI-like, Ollama) | `pdf2zh/translator.py` | `test/test_translator.py` |
@@ -111,5 +116,12 @@ test/
 | 测试文件 | 覆盖场景 |
 |---|---|
 | `test/e2e/test_e2e_word.py` | 真实 Google 翻译 + Word 导出，前 3 页；段落数/图片数回归 ±20% |
+| `test/e2e/test_e2e_markdown.py` | 真实 Google 翻译 + Markdown 导出，第 4-6 页；行数回归 ±20%；Obsidian wikilink 校验 |
 
 `test/e2e/expected/*.json` 基线文件和 `test/e2e/fixtures/*.pdf` 可以直接 commit。
+
+## gstack
+
+Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
+
+Available gstack skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/setup-gbrain`, `/retro`, `/investigate`, `/document-release`, `/document-generate`, `/codex`, `/cso`, `/autoplan`, `/plan-devex-review`, `/devex-review`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`, `/learn`

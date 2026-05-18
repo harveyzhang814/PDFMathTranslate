@@ -40,7 +40,8 @@ The following features are experimental additions on top of the upstream project
 | **Element extraction** | Extract figures and tables from the PDF as separate image files | `--extract-elements` |
 | **Column-aware reading order** | Detect multi-column layouts and sort text blocks into the correct reading order before translation | automatic |
 | **Figure caption pairing** | Associate figure captions with their corresponding figure boxes for improved context | automatic |
-| **Word document export** | Export the translated result as a `.docx` file with embedded images and tables | automatic |
+| **Word document export** | Export the translated result as a `.docx` file with embedded images and tables | `--word` |
+| **Markdown export** | Export the translated result as a `.md` file with figures in an `images/` subfolder (Obsidian wikilink format) | `--markdown` |
 
 <div align="center">
 <img src="./docs/images/preview.gif" width="80%"/>
@@ -265,6 +266,8 @@ In the following table, we list all advanced options for reference:
 | `--mcp`               | Enable MCP STDIO mode                                                                                         | `pdf2zh --mcp`                                 |
 | `--sse`               | Enable MCP SSE mode                                                                                           | `pdf2zh --mcp --sse`                           |
 | `--extract-elements`  | *(fork)* Extract figures and tables as separate image files alongside the translated PDF                      | `pdf2zh example.pdf --extract-elements`        |
+| `--word`              | *(fork)* Export translated result as a `.docx` file with embedded images                                     | `pdf2zh example.pdf --word`                    |
+| `--markdown`          | *(fork)* Export translated result as `.md` with figures in `images/` subfolder (Obsidian wikilink format)    | `pdf2zh example.pdf --markdown`                |
 
 For detailed explanations, please refer to our document about [Advanced Usage](./docs/ADVANCED.md) for a full list of each option.
 
@@ -280,7 +283,7 @@ For downstream applications, please refer to our document about [API Details](./
 
 - [PDFMathTranslate/PDFMathTranslate-next](https://github.com/PDFMathTranslate/PDFMathTranslate-next): A fork with web-ui and additional features. This fork handles a large number of marginal cases, improves PDF compatibility, and optimizes cross-column and cross-page semantic consistency, dynamic scaling, and dynamic scaling consistency, among many other translation quality improvements. However, this fork is intended solely for development and does not address compatibility issues and is not designed for community-contributions.
 
-- [harveyzhang814/PDFMathTranslate](https://github.com/harveyzhang814/PDFMathTranslate) *(this fork)*: Adds element extraction (`--extract-elements`), column-aware reading order, figure caption pairing, and Word document export on top of the stable upstream release.
+- [harveyzhang814/PDFMathTranslate](https://github.com/harveyzhang814/PDFMathTranslate) *(this fork)*: Adds element extraction (`--extract-elements`), column-aware reading order, figure caption pairing, Word document export (`--word`), and Markdown export (`--markdown`) on top of the stable upstream release.
 
 <h2 id="information">5. Project Information</h2>
 <h3 id="citation">5.1 Citation</h3>

@@ -4,6 +4,7 @@ import asyncio
 import io
 import os
 import re
+import shutil
 import sys
 import tempfile
 import logging
@@ -18,6 +19,7 @@ import tqdm
 
 from pdf2zh.converter_docx import convert_to_pdf, is_convertible
 from pdf2zh.export_word import export_pdf_to_word
+from pdf2zh.export_markdown import export_pdf_to_markdown
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFResourceManager
@@ -605,3 +607,62 @@ def translate_to_word(
             shutil.rmtree(str(pdf_dir), ignore_errors=True)
 
     return docx_path
+
+
+def translate_to_markdown(
+    files: List[str],
+    output: str = "",
+    lang_in: str = "en",
+    lang_out: str = "zh",
+    service: str = "google",
+    thread: int = 0,
+    model=None,
+    pages: Optional[List[int]] = None,
+    skip_subset_fonts: bool = True,
+    **kwargs,
+) -> str:
+    """
+    Translate PDF files and export as a Markdown document with Obsidian image links.
+
+    Args:
+        files: list of input PDF paths
+        output: output directory (task folder created inside as <stem>/)
+        lang_in: source language
+        lang_out: target language
+        service: translation service (e.g. "google", "ollama:gemma2:9b")
+        thread: number of threads (0=auto)
+        model: layout model (OnnxModel instance)
+        pages: optional page list to translate
+
+    Returns:
+        Path to the generated .md file
+    """
+    if not output:
+        output = tempfile.mkdtemp(prefix="pdf2zh_markdown_")
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+    try:
+        result = translate(
+            files=files,
+            output=str(output_path),
+            lang_in=lang_in,
+            lang_out=lang_out,
+            service=service,
+            thread=thread,
+            model=model,
+            pages=pages,
+            extract_elements=True,
+            elements_output_dir=elem_dir,
+            skip_subset_fonts=skip_subset_fonts,
+        )
+
+        mono_pdf = result[0][0]
+        stem = Path(mono_pdf).stem
+        task_dir = str(output_path / stem)
+        md_path = export_pdf_to_markdown(mono_pdf, elem_dir, task_dir, lang_out=lang_out)
+    finally:
+        shutil.rmtree(elem_dir, ignore_errors=True)
+
+    return md_path
