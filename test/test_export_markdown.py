@@ -154,5 +154,15 @@ class TestExportPdfToMarkdown(unittest.TestCase):
         self.assertFalse(content.startswith("---"))
 
 
+class TestTranslateToMarkdownSignature(unittest.TestCase):
+    def test_function_exists_and_is_callable(self):
+        from pdf2zh.high_level import translate_to_markdown
+        import inspect
+        sig = inspect.signature(translate_to_markdown)
+        self.assertIn("files", sig.parameters)
+        self.assertIn("output", sig.parameters)
+        self.assertIn("lang_out", sig.parameters)
+
+
 if __name__ == "__main__":
     unittest.main()
