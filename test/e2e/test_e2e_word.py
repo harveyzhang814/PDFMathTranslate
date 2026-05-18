@@ -30,21 +30,39 @@ def onnx_model():
 
 @pytest.fixture(scope="module")
 def docx_path(onnx_model):
-    from pdf2zh.high_level import translate_to_word
+    import shutil
+    import tempfile
+    from pdf2zh.doclayout import ModelInstance
+    from pdf2zh.export_word import export_pdf_to_word
+    from pdf2zh.kernel import KernelRegistry
+    from pdf2zh.kernel.protocol import TranslateRequest
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ModelInstance.value = onnx_model
 
-    path = translate_to_word(
-        files=[str(FIXTURE_PDF)],
-        output=str(OUTPUT_DIR),
-        lang_in="en",
-        lang_out="zh",
-        service="google",
-        pages=PAGES,
-        model=onnx_model,
-        keep_pdf=True,
-    )
-    return Path(path)
+    KernelRegistry.switch("fast")
+    kernel = KernelRegistry.get()
+
+    elem_dir = tempfile.mkdtemp(prefix="pdf2zh_e2e_elem_")
+    try:
+        request = TranslateRequest(
+            files=[str(FIXTURE_PDF)],
+            output=str(OUTPUT_DIR),
+            lang_in="en",
+            lang_out="zh",
+            service="google",
+            pages=PAGES,
+            extract_elements=True,
+            elements_output_dir=elem_dir,
+        )
+        results = kernel.translate(request)
+        mono = Path(results[0].mono_pdf)
+        docx = str(OUTPUT_DIR / f"{mono.stem}.docx")
+        export_pdf_to_word(str(mono), elem_dir, docx, lang_out="zh", pages=PAGES)
+    finally:
+        shutil.rmtree(elem_dir, ignore_errors=True)
+
+    return Path(docx)
 
 
 @pytest.mark.e2e
