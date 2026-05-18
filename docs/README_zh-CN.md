@@ -1,6 +1,6 @@
 <div align="center">
 
-> **这是 [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) 的个人 fork，添加了元素提取、列布局排序和 Word 导出等实验性功能。稳定版请访问[上游仓库](https://github.com/Byaidu/PDFMathTranslate)。**
+> **这是 [Byaidu/PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) 的个人 fork，添加了元素提取、列布局排序、Word 导出和 Markdown 导出等实验性功能。稳定版请访问[上游仓库](https://github.com/Byaidu/PDFMathTranslate)。**
 
 </div>
 
