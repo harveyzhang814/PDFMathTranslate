@@ -30,6 +30,7 @@ from pdf2zh.translator import (
     GoogleTranslator,
     GrokTranslator,
     GroqTranslator,
+    IdentityTranslator,
     MiniMaxTranslator,
     ModelScopeTranslator,
     OllamaTranslator,
