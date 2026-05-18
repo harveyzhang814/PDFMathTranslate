@@ -404,7 +404,7 @@ class TranslateConverter(PDFConverterEx):
                 )
                 pstk[:], sstk[:] = zip(*paired)
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.thread
+            max_workers=self.thread or None
         ) as executor:
             news = list(executor.map(worker, sstk))
 

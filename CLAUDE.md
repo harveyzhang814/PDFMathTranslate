@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run all tests
+# Run all unit tests (e2e excluded by default)
 python3 -m pytest test/ -v
 
 # Run a single test file
@@ -13,6 +13,9 @@ python3 -m pytest test/test_export_word.py -v
 
 # Run a single test case
 python3 -m pytest test/test_caption_pairing.py::TestPairFigureCaption::test_caption_below_figure_is_paired -v
+
+# Run E2E tests (slow, requires network + ONNX model; first run creates baseline)
+python3 -m pytest test/e2e/ -v -m e2e
 
 # Install project (required before running tests)
 pip3 install -e .
@@ -92,14 +95,21 @@ CLI (pdf2zh.py)
 
 **No tests yet:** `text_order.py`, `high_level.py` (integration), `converter_docx.py`
 
-## E2E 测试样本
+## E2E 测试
+
+E2E 测试位于 `test/e2e/`，默认被排除在 `pytest test/` 之外（见 `pyproject.toml [tool.pytest.ini_options]`）。
 
 ```
 test/
-  file/            # 单元测试用轻量 PDF（已有）
+  file/            # 单元测试用轻量 PDF
   e2e/
     fixtures/      # 输入样本（论文 PDF 等）
-    expected/      # 期望输出，用于快照对比（可选）
+    expected/      # 结构回归基线（JSON），首次运行自动生成
+    output/        # 测试输出（.docx / .pdf），不提交
 ```
 
-`test/file/` 和 `test/e2e/` 下的 `.pdf` / `.docx` 已在 `.gitignore` 中加例外，可以直接 commit。
+| 测试文件 | 覆盖场景 |
+|---|---|
+| `test/e2e/test_e2e_word.py` | 真实 Google 翻译 + Word 导出，前 3 页；段落数/图片数回归 ±20% |
+
+`test/e2e/expected/*.json` 基线文件和 `test/e2e/fixtures/*.pdf` 可以直接 commit。
