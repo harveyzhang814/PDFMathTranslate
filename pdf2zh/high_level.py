@@ -4,6 +4,7 @@ import asyncio
 import io
 import os
 import re
+import shutil
 import sys
 import tempfile
 import logging
@@ -549,7 +550,6 @@ def translate_to_word(
         docx_path = str(output_path / f"{Path(mono_pdf).stem}.docx")
         export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out)
     finally:
-        import shutil
         shutil.rmtree(elem_dir, ignore_errors=True)
 
     return docx_path
@@ -583,8 +583,6 @@ def translate_to_markdown(
     Returns:
         Path to the generated .md file
     """
-    import shutil as _shutil
-
     if not output:
         output = tempfile.mkdtemp(prefix="pdf2zh_markdown_")
     output_path = Path(output)
@@ -611,6 +609,6 @@ def translate_to_markdown(
         task_dir = str(output_path / stem)
         md_path = export_pdf_to_markdown(mono_pdf, elem_dir, task_dir, lang_out=lang_out)
     finally:
-        _shutil.rmtree(elem_dir, ignore_errors=True)
+        shutil.rmtree(elem_dir, ignore_errors=True)
 
     return md_path
