@@ -221,6 +221,14 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parse_params.add_argument(
+        "--no-pdf",
+        action="store_true",
+        default=False,
+        dest="no_pdf",
+        help="When --word is used, discard the intermediate mono/dual PDF files and output only the .docx.",
+    )
+
+    parse_params.add_argument(
         "--mcp", action="store_true", help="Launch pdf2zh MCP server in STDIO mode"
     )
 
@@ -377,6 +385,7 @@ def main(args: Optional[List[str]] = None) -> int:
                 thread=parsed_args.thread,
                 model=ModelInstance.value,
                 pages=parsed_args.pages,
+                keep_pdf=not parsed_args.no_pdf,
             )
             print(f"Word document saved: {docx_path}")
         return 0

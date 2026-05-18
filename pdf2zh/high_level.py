@@ -23,7 +23,7 @@ from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFResourceManager
 from pdfminer.pdfpage import PDFPage
 from pdfminer.pdfparser import PDFParser
-from pymupdf import Document, Font
+from pymupdf import Document, Font, Rect as MuRect
 
 from pdf2zh.converter import TranslateConverter
 from pdf2zh.doclayout import OnnxModel
@@ -118,6 +118,10 @@ def translate_patch(
     else:
         total_pages = doc_zh.page_count
 
+    all_figure_boxes: list = []
+    all_caption_boxes: list = []
+    all_figure_page_coords: list = []  # figure bboxes in pymupdf page coords for Word export
+
     parser = PDFParser(inf)
     doc = PDFDocument(parser)
     with tqdm.tqdm(total=total_pages) as progress:
@@ -142,6 +146,7 @@ def translate_patch(
             caption_data = {}  # {(pageno, type, idx): text}
             elem_counter = {"figure": 0, "table": 0}
 
+            page_caption_boxes = []
             for d in page_layout.boxes:
                 cls_name = page_layout.names[int(d.cls)]
                 if cls_name == "table":
@@ -152,9 +157,33 @@ def translate_patch(
                     idx = elem_counter["figure"]
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     figure_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "idx": idx, "pageno": pageno})
-                # elif cls_name == "figure_caption":
-                    # caption pairing temporarily disabled - requires pymupdf page access
-                    pass
+                elif cls_name == "figure_caption":
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    page_caption_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "pageno": pageno})
+
+            # Compute pixel→page scale and collect caption text + figure page coords
+            if figure_boxes or page_caption_boxes:
+                mupdf_page = doc_zh[pageno]
+                sx = mupdf_page.rect.width / pix.width if pix.width else 1.0
+                sy = mupdf_page.rect.height / pix.height if pix.height else 1.0
+
+                for cap in page_caption_boxes:
+                    clip = MuRect(cap["x0"] * sx, cap["y0"] * sy, cap["x1"] * sx, cap["y1"] * sy)
+                    cap["text"] = mupdf_page.get_text("text", clip=clip).strip()
+                all_caption_boxes.extend(page_caption_boxes)
+
+                for fig in figure_boxes:
+                    all_figure_page_coords.append({
+                        "pageno": fig["pageno"],
+                        "idx": fig["idx"],
+                        "image_file": f"p{fig['pageno'] + 1}_figure_{fig['idx']:03d}.png",
+                        "x0": fig["x0"] * sx,
+                        "y0": fig["y0"] * sy,
+                        "x1": fig["x1"] * sx,
+                        "y1": fig["y1"] * sy,
+                    })
+
+            all_figure_boxes.extend(figure_boxes)
 
 
             # ---- Extract figures and tables as separate images ----
@@ -171,10 +200,11 @@ def translate_patch(
                     if cls_name not in ("figure", "table"):
                         continue
                     x0, y0, x1, y1 = d.xyxy.squeeze()
+                    # DocLayout xyxy and numpy image both use y=0 at top; no flip needed.
                     slice_x0 = int(np.clip(int(x0 - 1), 0, pix_w))
                     slice_x1 = int(np.clip(int(x1 + 1), 0, pix_w))
-                    slice_y0 = int(np.clip(int(pix_h - y1 - 1), 0, pix_h))
-                    slice_y1 = int(np.clip(int(pix_h - y0 + 1), 0, pix_h))
+                    slice_y0 = int(np.clip(int(y0 - 1), 0, pix_h))
+                    slice_y1 = int(np.clip(int(y1 + 1), 0, pix_h))
                     if slice_x1 <= slice_x0 or slice_y1 <= slice_y0:
                         continue
                     extract_counter[cls_name] += 1
@@ -217,6 +247,21 @@ def translate_patch(
             interpreter.process_page(page)
 
     device.close()
+
+    # Save figure bboxes in page coordinates for proximity-based Word export pairing
+    if extract_elements and elements_output_dir and all_figure_page_coords:
+        import json
+        figures_json = os.path.join(elements_output_dir, "elements", "figures.json")
+        os.makedirs(os.path.dirname(figures_json), exist_ok=True)
+        with open(figures_json, "w", encoding="utf-8") as f:
+            json.dump(all_figure_page_coords, f, indent=2)
+
+    # Build element manifest after all pages are processed
+    if extract_elements and elements_output_dir and all_figure_boxes:
+        from pdf2zh.caption_pairing import pair_figure_caption, build_element_manifest
+        pairings = pair_figure_caption(all_figure_boxes, all_caption_boxes)
+        build_element_manifest(pairings, elements_output_dir)
+
     return obj_patch
 
 
@@ -501,6 +546,7 @@ def translate_to_word(
     model=None,
     pages: Optional[List[int]] = None,
     skip_subset_fonts: bool = True,
+    keep_pdf: bool = True,
     **kwargs,
 ) -> str:
     """
@@ -515,22 +561,27 @@ def translate_to_word(
         thread: number of threads (0=auto)
         model: layout model (OnnxModel instance)
         pages: optional page list to translate
+        keep_pdf: if True, keep the intermediate mono/dual PDFs in output dir;
+                  if False (default), they are deleted after the .docx is written
 
     Returns:
         Path to the generated .docx file
     """
+    import shutil
+
     if not output:
         output = tempfile.mkdtemp(prefix="pdf2zh_word_")
     output_path = Path(output)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Temp dir for extracted elements — lives until export completes
-    elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+    # Intermediate PDFs go to a temp dir unless the caller wants to keep them
+    pdf_dir = output_path if keep_pdf else Path(tempfile.mkdtemp(prefix="pdf2zh_pdf_"))
+    elem_dir = Path(tempfile.mkdtemp(prefix="pdf2zh_elem_"))
     try:
         # Step 1: translate with element extraction
         result = translate(
             files=files,
-            output=str(output_path),
+            output=str(pdf_dir),
             lang_in=lang_in,
             lang_out=lang_out,
             service=service,
@@ -538,17 +589,19 @@ def translate_to_word(
             model=model,
             pages=pages,
             extract_elements=True,
-            elements_output_dir=elem_dir,
+            elements_output_dir=str(elem_dir),
             skip_subset_fonts=skip_subset_fonts,
         )
 
         mono_pdf = result[0][0]
 
         # Step 2: export to Word (uses elem_dir before we clean up)
-        docx_path = str(output_path / f"{Path(mono_pdf).stem}.docx")
-        export_pdf_to_word(mono_pdf, elem_dir, docx_path, lang_out=lang_out)
+        stem = Path(mono_pdf).stem
+        docx_path = str(output_path / f"{stem}.docx")
+        export_pdf_to_word(mono_pdf, str(elem_dir), docx_path, lang_out=lang_out, pages=pages)
     finally:
-        import shutil
-        shutil.rmtree(elem_dir, ignore_errors=True)
+        shutil.rmtree(str(elem_dir), ignore_errors=True)
+        if not keep_pdf:
+            shutil.rmtree(str(pdf_dir), ignore_errors=True)
 
     return docx_path

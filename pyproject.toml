@@ -84,6 +84,12 @@ build-backend = "hatchling.build"
 pdf2zh = "pdf2zh.pdf2zh:main"
 pdf2zh-setup-precise = "pdf2zh.kernel.precise:setup_precise_cli"
 
+[tool.pytest.ini_options]
+addopts = "--ignore=test/e2e"
+markers = [
+    "e2e: end-to-end tests (slow, requires network and ONNX model)",
+]
+
 [tool.flake8]
 ignore = ["E203", "E261", "E501", "W503", "E741"]
 max-line-length = 88
