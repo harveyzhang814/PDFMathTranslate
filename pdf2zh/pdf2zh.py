@@ -371,25 +371,6 @@ def main(args: Optional[List[str]] = None) -> int:
     KernelRegistry.switch(parsed_args.mode)  # "fast" or "precise"
     kernel = KernelRegistry.get()
 
-    if parsed_args.word:
-        from pdf2zh.high_level import translate_to_word
-        from pdf2zh.doclayout import OnnxModel
-
-        for file in parsed_args.files:
-            docx_path = translate_to_word(
-                files=[file],
-                output=parsed_args.output or "",
-                lang_in=parsed_args.lang_in,
-                lang_out=parsed_args.lang_out,
-                service=parsed_args.service,
-                thread=parsed_args.thread,
-                model=ModelInstance.value,
-                pages=parsed_args.pages,
-                keep_pdf=not parsed_args.no_pdf,
-            )
-            print(f"Word document saved: {docx_path}")
-        return 0
-
     if parsed_args.dir:
         parsed_args.files = find_all_files_in_directory(parsed_args.files[0])
 
@@ -402,26 +383,75 @@ def main(args: Optional[List[str]] = None) -> int:
             else parsed_args.prompt
         )
 
-    request = TranslateRequest(
-        files=parsed_args.files,
-        output=parsed_args.output,
-        pages=parsed_args.pages,
-        lang_in=parsed_args.lang_in,
-        lang_out=parsed_args.lang_out,
-        service=parsed_args.service,
-        thread=parsed_args.thread,
-        vfont=parsed_args.vfont,
-        vchar=parsed_args.vchar,
-        envs={},
-        prompt=prompt_text,
-        skip_subset_fonts=parsed_args.skip_subset_fonts,
-        ignore_cache=parsed_args.ignore_cache,
-        compatible=parsed_args.compatible,
-        debug=parsed_args.debug,
-        extract_elements=parsed_args.extract_elements,
-        elements_output_dir=parsed_args.elements_output_dir,
-    )
-    kernel.translate(request)
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    if parsed_args.word:
+        # Translate through Kernel, then assemble Word as post-processing.
+        # Each file gets its own elem_dir to avoid image filename collisions
+        # across files (both would produce p1_figure_001.png etc.).
+        from pdf2zh.export_word import export_pdf_to_word
+        for file in parsed_args.files:
+            elem_dir = tempfile.mkdtemp(prefix="pdf2zh_elem_")
+            try:
+                request = TranslateRequest(
+                    files=[file],
+                    output=parsed_args.output,
+                    pages=parsed_args.pages,
+                    lang_in=parsed_args.lang_in,
+                    lang_out=parsed_args.lang_out,
+                    service=parsed_args.service,
+                    thread=parsed_args.thread,
+                    vfont=parsed_args.vfont,
+                    vchar=parsed_args.vchar,
+                    envs={},
+                    prompt=prompt_text,
+                    skip_subset_fonts=parsed_args.skip_subset_fonts,
+                    ignore_cache=parsed_args.ignore_cache,
+                    compatible=parsed_args.compatible,
+                    debug=parsed_args.debug,
+                    extract_elements=True,
+                    elements_output_dir=elem_dir,
+                )
+                results = kernel.translate(request)
+                mono = Path(results[0].mono_pdf)
+                out_dir = Path(parsed_args.output) if parsed_args.output else mono.parent
+                docx_path = str(out_dir / f"{mono.stem}.docx")
+                export_pdf_to_word(
+                    str(mono), elem_dir, docx_path,
+                    lang_out=parsed_args.lang_out,
+                    pages=parsed_args.pages,
+                )
+                print(f"Word document saved: {docx_path}")
+                if parsed_args.no_pdf:
+                    mono.unlink(missing_ok=True)
+                    if results[0].dual_pdf:
+                        Path(results[0].dual_pdf).unlink(missing_ok=True)
+            finally:
+                shutil.rmtree(elem_dir, ignore_errors=True)
+    else:
+        request = TranslateRequest(
+            files=parsed_args.files,
+            output=parsed_args.output,
+            pages=parsed_args.pages,
+            lang_in=parsed_args.lang_in,
+            lang_out=parsed_args.lang_out,
+            service=parsed_args.service,
+            thread=parsed_args.thread,
+            vfont=parsed_args.vfont,
+            vchar=parsed_args.vchar,
+            envs={},
+            prompt=prompt_text,
+            skip_subset_fonts=parsed_args.skip_subset_fonts,
+            ignore_cache=parsed_args.ignore_cache,
+            compatible=parsed_args.compatible,
+            debug=parsed_args.debug,
+            extract_elements=parsed_args.extract_elements,
+            elements_output_dir=parsed_args.elements_output_dir,
+        )
+        kernel.translate(request)
+
     return 0
 
 
