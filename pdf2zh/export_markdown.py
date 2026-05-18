@@ -30,7 +30,7 @@ CAPTION_KEYWORDS = [
 
 def _parse_elem_filename(fname: str) -> Optional[dict]:
     """Parse element filename like 'p2_table_001.png' → {type: 'table', idx: 1}."""
-    m = re.match(r"p\d+_(\w+)_(\d+)\.png", fname)
+    m = re.match(r"p\d+_([a-z]+)_(\d+)\.png", fname)
     if not m:
         return None
     return {"type": m.group(1), "idx": int(m.group(2))}
