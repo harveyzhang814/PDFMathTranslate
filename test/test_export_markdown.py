@@ -164,5 +164,19 @@ class TestTranslateToMarkdownSignature(unittest.TestCase):
         self.assertIn("lang_out", sig.parameters)
 
 
+class TestMarkdownCliFlag(unittest.TestCase):
+    def test_markdown_flag_is_registered(self):
+        from pdf2zh.pdf2zh import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["dummy.pdf", "--markdown"])
+        self.assertTrue(args.markdown)
+
+    def test_markdown_flag_defaults_false(self):
+        from pdf2zh.pdf2zh import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["dummy.pdf"])
+        self.assertFalse(args.markdown)
+
+
 if __name__ == "__main__":
     unittest.main()

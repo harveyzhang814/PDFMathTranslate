@@ -221,6 +221,12 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parse_params.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Export translated content as Markdown with images in images/ subfolder.",
+    )
+
+    parse_params.add_argument(
         "--mcp", action="store_true", help="Launch pdf2zh MCP server in STDIO mode"
     )
 
@@ -379,6 +385,23 @@ def main(args: Optional[List[str]] = None) -> int:
                 pages=parsed_args.pages,
             )
             print(f"Word document saved: {docx_path}")
+        return 0
+
+    if parsed_args.markdown:
+        from pdf2zh.high_level import translate_to_markdown
+
+        for file in parsed_args.files:
+            md_path = translate_to_markdown(
+                files=[file],
+                output=parsed_args.output or "",
+                lang_in=parsed_args.lang_in,
+                lang_out=parsed_args.lang_out,
+                service=parsed_args.service,
+                thread=parsed_args.thread,
+                model=ModelInstance.value,
+                pages=parsed_args.pages,
+            )
+            print(f"Markdown saved: {md_path}")
         return 0
 
     if parsed_args.dir:
