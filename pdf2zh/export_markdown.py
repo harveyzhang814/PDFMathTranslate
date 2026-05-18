@@ -92,7 +92,7 @@ def export_pdf_to_markdown(
     images_dir.mkdir(exist_ok=True)
 
     # Copy all element PNGs into images/ before opening the PDF
-    elements_subdir = os.path.join(elem_dir, "elements") if elem_dir else ""
+    elements_subdir = os.path.join(elem_dir, "elements") if elem_dir else None
     if elements_subdir and os.path.isdir(elements_subdir):
         for fname in os.listdir(elements_subdir):
             if fname.endswith(".png"):
@@ -101,73 +101,70 @@ def export_pdf_to_markdown(
                     str(images_dir / fname),
                 )
 
-    doc_mono = pymupdf.open(pdf_mono_path)
     lines: List[str] = []
 
-    for pageno, page in enumerate(doc_mono):
-        if pageno > 0:
-            lines.extend(["", "---", ""])
+    with pymupdf.open(pdf_mono_path) as doc_mono:
+        for pageno, page in enumerate(doc_mono):
+            if pageno > 0:
+                lines.extend(["", "---", ""])
 
-        # Collect element files for this page
-        elem_by_idx: dict = {}
-        elem_files: List[str] = []
-        if elements_subdir and os.path.isdir(elements_subdir):
-            elem_prefix = f"p{pageno + 1}_"
-            elem_files = sorted(
-                f for f in os.listdir(elements_subdir)
-                if f.startswith(elem_prefix) and f.endswith(".png")
-            )
-            for ef in elem_files:
-                parsed = _parse_elem_filename(ef)
-                if parsed:
-                    elem_by_idx[(parsed["type"], parsed["idx"])] = ef
+            # Collect element files for this page
+            elem_by_idx: dict = {}
+            elem_files: List[str] = []
+            if elements_subdir and os.path.isdir(elements_subdir):
+                elem_prefix = f"p{pageno + 1}_"
+                elem_files = sorted(
+                    f for f in os.listdir(elements_subdir)
+                    if f.startswith(elem_prefix) and f.endswith(".png")
+                )
+                for ef in elem_files:
+                    parsed = _parse_elem_filename(ef)
+                    if parsed:
+                        elem_by_idx[(parsed["type"], parsed["idx"])] = ef
 
-        next_elem_idx: dict = {"figure": 1, "table": 1}
+            next_elem_idx: dict = {"figure": 1, "table": 1}
 
-        blocks = _extract_page_text_blocks(page)
-        if not blocks:
-            # No text: dump all images for this page
-            for ef in elem_files:
-                lines.append(f"![[images/{ef}]]")
-                lines.append("")
-            continue
-
-        # Sort blocks in reading order.
-        # sort_text_blocks_by_layout expects y-from-bottom (PDF coords);
-        # pymupdf uses y-from-top, so flip before sorting and restore after.
-        avg_w = np.mean([max(b["x1"] - b["x0"], 1) for b in blocks])
-        ph = page.rect.height
-        flipped = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in blocks]
-        sorted_flipped = sort_text_blocks_by_layout(flipped, page.rect.width, ph, avg_w)
-        sorted_blocks = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in sorted_flipped]
-
-        for block in sorted_blocks:
-            text = block["content"]
-            if not text:
+            blocks = _extract_page_text_blocks(page)
+            if not blocks:
+                # No text: dump all images for this page
+                for ef in elem_files:
+                    lines.append(f"![[images/{ef}]]")
+                    lines.append("")
                 continue
 
-            if _is_caption(text):
-                # Insert the next available image before the caption
-                for elem_type in ["figure", "table"]:
-                    k = (elem_type, next_elem_idx[elem_type])
-                    if k in elem_by_idx:
-                        ef = elem_by_idx.pop(k)
-                        next_elem_idx[elem_type] += 1
-                        lines.append(f"![[images/{ef}]]")
-                        lines.append("")
-                        break
-                lines.append(f"*{text}*")
-                lines.append("")
-            else:
-                lines.append(text)
-                lines.append("")
+            # Sort blocks in reading order.
+            # sort_text_blocks_by_layout expects y-from-bottom (PDF coords);
+            # pymupdf uses y-from-top, so flip before sorting and restore after.
+            avg_w = np.mean([max(b["x1"] - b["x0"], 1) for b in blocks])
+            ph = page.rect.height
+            flipped = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in blocks]
+            sorted_blocks = sort_text_blocks_by_layout(flipped, page.rect.width, ph, avg_w)
 
-        # Any images not consumed by caption matching go at the end of the page
-        for key, ef in sorted(elem_by_idx.items()):
-            lines.append(f"![[images/{ef}]]")
-            lines.append("")
+            for block in sorted_blocks:
+                text = block["content"]
+                if not text:
+                    continue
 
-    doc_mono.close()
+                if _is_caption(text):
+                    # Insert the next available image before the caption
+                    for elem_type in ["figure", "table"]:
+                        k = (elem_type, next_elem_idx[elem_type])
+                        if k in elem_by_idx:
+                            ef = elem_by_idx.pop(k)
+                            next_elem_idx[elem_type] += 1
+                            lines.append(f"![[images/{ef}]]")
+                            lines.append("")
+                            break
+                    lines.append(f"*{text}*")
+                    lines.append("")
+                else:
+                    lines.append(text)
+                    lines.append("")
+
+            # Any images not consumed by caption matching go at the end of the page
+            for key, ef in sorted(elem_by_idx.items()):
+                lines.append(f"![[images/{ef}]]")
+                lines.append("")
 
     # Strip trailing blank lines
     while lines and lines[-1] == "":
