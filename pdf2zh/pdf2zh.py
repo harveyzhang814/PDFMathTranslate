@@ -203,7 +203,10 @@ def create_parser() -> argparse.ArgumentParser:
     parse_params.add_argument(
         "--extract-elements",
         action="store_true",
-        help="Extract figures and tables as separate image files during translation.",
+        help=(
+            "Extract figures and tables as separate image files during translation. "
+            "Implied automatically by --word and --markdown."
+        ),
     )
 
     parse_params.add_argument(
@@ -214,10 +217,25 @@ def create_parser() -> argparse.ArgumentParser:
         "If not specified, elements are saved alongside the translated PDF.",
     )
 
-    parse_params.add_argument(
+    # --word and --markdown are mutually exclusive export formats.
+    # Both imply --extract-elements (resolved in parse_args via ARG_IMPLIES).
+    export_group = parse_params.add_mutually_exclusive_group()
+    export_group.add_argument(
         "--word",
         action="store_true",
-        help="Export translated content as a Word document (.docx) with images and tables.",
+        help=(
+            "Export translated content as a Word document (.docx) with images and tables. "
+            "Implies --extract-elements. Mutually exclusive with --markdown."
+        ),
+    )
+    export_group.add_argument(
+        "--markdown",
+        action="store_true",
+        help=(
+            "Export translated content as Markdown with images in an images/ subfolder "
+            "(Obsidian wikilink format). "
+            "Implies --extract-elements. Mutually exclusive with --word."
+        ),
     )
 
     parse_params.add_argument(
@@ -226,12 +244,6 @@ def create_parser() -> argparse.ArgumentParser:
         default=False,
         dest="no_pdf",
         help="When --word is used, discard the intermediate mono/dual PDF files and output only the .docx.",
-    )
-
-    parse_params.add_argument(
-        "--markdown",
-        action="store_true",
-        help="Export translated content as Markdown with images in images/ subfolder.",
     )
 
     parse_params.add_argument(
@@ -245,8 +257,24 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Declarative parameter dependency table.
+# Each entry: flag_name (dest) → list of flags it implicitly enables.
+# Resolved once in parse_args; keeps the dispatch logic below free of
+# scattered `if X: args.Y = True` assignments.
+ARG_IMPLIES: dict[str, list[str]] = {
+    "word": ["extract_elements"],
+    "markdown": ["extract_elements"],
+}
+
+
 def parse_args(args: Optional[List[str]]) -> argparse.Namespace:
     parsed_args = create_parser().parse_args(args=args)
+
+    # Resolve implied flags declaratively.
+    for flag, implied in ARG_IMPLIES.items():
+        if getattr(parsed_args, flag, False):
+            for dep in implied:
+                setattr(parsed_args, dep, True)
 
     if parsed_args.pages:
         pages = []
@@ -417,7 +445,7 @@ def main(args: Optional[List[str]] = None) -> int:
                     ignore_cache=parsed_args.ignore_cache,
                     compatible=parsed_args.compatible,
                     debug=parsed_args.debug,
-                    extract_elements=True,
+                    extract_elements=parsed_args.extract_elements,
                     elements_output_dir=elem_dir,
                 )
                 results = kernel.translate(request)
@@ -457,7 +485,7 @@ def main(args: Optional[List[str]] = None) -> int:
                     ignore_cache=parsed_args.ignore_cache,
                     compatible=parsed_args.compatible,
                     debug=parsed_args.debug,
-                    extract_elements=True,
+                    extract_elements=parsed_args.extract_elements,
                     elements_output_dir=elem_dir,
                 )
                 results = kernel.translate(request)

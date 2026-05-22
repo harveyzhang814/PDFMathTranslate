@@ -24,11 +24,26 @@
 | `--dir` | 批量翻译目录 | `pdf2zh --dir /path/to/pdfs/` |
 | `--config` | 配置文件路径 | `pdf2zh --config config.json` |
 | `--mode` | 翻译内核：`fast`（默认）或 `precise`（实验性） | `pdf2zh --mode precise example.pdf` |
-| `--word` | 导出为 Word 文档 | `pdf2zh example.pdf --word` |
+| `--extract-elements` | 提取图表为独立图片文件（由 `--word` / `--markdown` 自动启用，也可单独使用） | `pdf2zh example.pdf --extract-elements` |
+| `--word` | 导出为 Word 文档（自动启用 `--extract-elements`；与 `--markdown` 互斥） | `pdf2zh example.pdf --word` |
+| `--markdown` | 导出为 Markdown（图片置于 `images/`，Obsidian wikilink 格式；自动启用 `--extract-elements`；与 `--word` 互斥） | `pdf2zh example.pdf --markdown` |
+| `--no-pdf` | 配合 `--word` 使用，丢弃中间 PDF 只保留 `.docx` | `pdf2zh example.pdf --word --no-pdf` |
 | `--skip-subset-fonts` | 禁用字体子集化 | `pdf2zh example.pdf --skip-subset-fonts` |
 | `--ignore-cache` | 忽略翻译缓存，强制重新翻译 | `pdf2zh example.pdf --ignore-cache` |
 
 语言代码参考：[Google 语言代码](https://developers.google.com/admin-sdk/directory/v1/languages)、[DeepL 语言代码](https://developers.deepl.com/docs/resources/supported-languages)
+
+---
+
+## 参数依赖关系
+
+| 参数 | 自动启用 | 与以下参数互斥 |
+|------|---------|--------------|
+| `--word` | `--extract-elements` | `--markdown` |
+| `--markdown` | `--extract-elements` | `--word` |
+| `--extract-elements` | — | — |
+
+依赖关系由 `pdf2zh/pdf2zh.py` 中的 `ARG_IMPLIES` 字典在 `parse_args()` 阶段统一解析；互斥约束由 argparse `mutually_exclusive_group` 强制执行（传入互斥参数会立即报错）。
 
 ---
 
