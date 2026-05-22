@@ -89,6 +89,7 @@ CLI (pdf2zh.py)
 |---|---|---|
 | Translation cache | `pdf2zh/cache.py` | `test/test_cache.py` |
 | CLI entry / version flag | `pdf2zh/pdf2zh.py` | `test/test_cli.py` |
+| CLI arg deps: ARG_IMPLIES, mutual exclusion | `pdf2zh/pdf2zh.py` | `test/test_parse_args.py` |
 | PDF converter (char rendering, paragraph parsing, formulas) | `pdf2zh/converter.py` | `test/test_converter.py` |
 | DocLayout ONNX model (predict, resize, scale) | `pdf2zh/doclayout.py` | `test/test_doclayout.py` |
 | Word export (reading-order sort, multi-page handling) | `pdf2zh/export_word.py` | `test/test_export_word.py` |
