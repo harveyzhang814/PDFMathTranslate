@@ -11,6 +11,7 @@
 | [how-to/use-mcp.md](how-to/use-mcp.md) | 作为 MCP 工具接入 Claude Desktop |
 | [how-to/deploy-public-service.md](how-to/deploy-public-service.md) | 部署为公共服务：Docker、限制服务、隐藏 Key、GUI 授权 |
 | [how-to/use-http-api.md](how-to/use-http-api.md) | 通过 HTTP API 提交翻译任务、查询进度、下载结果 |
+| [how-to/export-markdown.md](how-to/export-markdown.md) | 使用 `--markdown` 导出 Obsidian 兼容的 Markdown 文档；输出结构与注意事项 |
 
 ## reference/ — 参考文档
 
@@ -18,7 +19,7 @@
 
 | 文件 | 用途 |
 |------|------|
-| [reference/cli.md](reference/cli.md) | 所有 CLI 选项、25 种翻译服务的环境变量表、config.json 格式 |
+| [reference/cli.md](reference/cli.md) | 所有 CLI 选项（含参数依赖关系表）、25 种翻译服务的环境变量表、config.json 格式 |
 | [reference/python-api.md](reference/python-api.md) | Python API：`translate()` 和 `translate_stream()` 签名与参数 |
 
 ## explanation/ — 理解类
@@ -32,8 +33,8 @@
 
 ## rfcs/ — 设计提案
 
-尚未实现的功能设计，状态为「待实现」。
+功能设计文档，记录设计决策与背景。
 
 | 文件 | 用途 |
 |------|------|
-| [rfcs/2026-05-18-markdown-export-design.md](rfcs/2026-05-18-markdown-export-design.md) | Markdown 导出（`--markdown`）功能的完整设计 spec |
+| [rfcs/2026-05-18-markdown-export-design.md](rfcs/2026-05-18-markdown-export-design.md) | Markdown 导出（`--markdown`）功能的完整设计 spec（已实现） |
