@@ -183,3 +183,4 @@ uv.lock
 !test/e2e/fixtures/*.pdf
 !test/e2e/expected/*.pdf
 !test/e2e/expected/*.docx
+.worktrees/
