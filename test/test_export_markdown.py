@@ -1,4 +1,199 @@
 import unittest
+from unittest.mock import MagicMock, patch
+
+
+class TestMergeBrokenLines(unittest.TestCase):
+    """_merge_broken_lines should join soft-wrapped English mid-word splits."""
+
+    def _b(self, text, x0=0, y0=0, x1=100, y1=20):
+        return {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "content": text}
+
+    def test_mid_word_split_merged(self):
+        """'Quac' + 'kenbush,' → 'Quackenbush,'"""
+        from pdf2zh.export_markdown import _merge_broken_lines
+        blocks = [self._b("（Quac"), self._b("kenbush，")]
+        result = _merge_broken_lines(blocks)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "（Quackenbush，")
+
+    def test_sentence_end_not_merged(self):
+        """Block ending with '.' starts a new paragraph."""
+        from pdf2zh.export_markdown import _merge_broken_lines
+        blocks = [self._b("First sentence."), self._b("second sentence")]
+        result = _merge_broken_lines(blocks)
+        self.assertEqual(len(result), 2)
+
+    def test_uppercase_start_not_merged(self):
+        """Block starting with uppercase is a new sentence."""
+        from pdf2zh.export_markdown import _merge_broken_lines
+        blocks = [self._b("End of para"), self._b("New paragraph here")]
+        result = _merge_broken_lines(blocks)
+        self.assertEqual(len(result), 2)
+
+    def test_cjk_not_merged(self):
+        """Chinese blocks are never merged by this rule."""
+        from pdf2zh.export_markdown import _merge_broken_lines
+        blocks = [self._b("这是第一段"), self._b("继续内容")]
+        result = _merge_broken_lines(blocks)
+        self.assertEqual(len(result), 2)
+
+    def test_multiple_consecutive_splits_merged(self):
+        """A word split across three blocks is fully reconstructed."""
+        from pdf2zh.export_markdown import _merge_broken_lines
+        blocks = [self._b("pro"), self._b("posi"), self._b("tion")]
+        result = _merge_broken_lines(blocks)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "proposition")
+
+    def test_empty_list(self):
+        from pdf2zh.export_markdown import _merge_broken_lines
+        self.assertEqual(_merge_broken_lines([]), [])
+
+    def test_single_block_unchanged(self):
+        from pdf2zh.export_markdown import _merge_broken_lines
+        blocks = [self._b("Only one block")]
+        result = _merge_broken_lines(blocks)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "Only one block")
+
+
+class TestIsVerticalTextBlock(unittest.TestCase):
+    """_is_vertical_text_block should detect per-character-line blocks."""
+
+    def test_doi_watermark_detected(self):
+        from pdf2zh.export_markdown import _is_vertical_text_block
+        # Simulate ' \n1\n5\n2\n0\n6\n7\n9\n3\n,\n ...' — each char on own line
+        text = "\n".join(list("1520679,2022,4,D")) + "\n"
+        self.assertTrue(_is_vertical_text_block(text))
+
+    def test_normal_paragraph_not_detected(self):
+        from pdf2zh.export_markdown import _is_vertical_text_block
+        text = "This is a normal paragraph.\nIt has two long lines.\n"
+        self.assertFalse(_is_vertical_text_block(text))
+
+    def test_short_block_not_detected(self):
+        from pdf2zh.export_markdown import _is_vertical_text_block
+        # Fewer than 5 lines → not classified as vertical text
+        text = "A\nB\nC\n"
+        self.assertFalse(_is_vertical_text_block(text))
+
+    def test_mixed_block_not_detected(self):
+        from pdf2zh.export_markdown import _is_vertical_text_block
+        # Some short lines but avg > 2 → not vertical text
+        text = "A\nB\nThis is longer\nD\nE\n"
+        self.assertFalse(_is_vertical_text_block(text))
+
+    def test_vertical_block_filtered_in_extraction(self):
+        """_extract_page_text_blocks drops vertical-text blocks."""
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        vertical_text = "\n".join(list("Downloaded from https://example")) + "\n"
+        page = MagicMock()
+        page.rect.height = 800
+        page.get_text.return_value = [
+            (0, 5, 400, 700, vertical_text, 0, 0),  # vertical watermark
+            (0, 200, 400, 400, "Normal body paragraph", 1, 0),
+        ]
+        result = _extract_page_text_blocks(page)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "Normal body paragraph")
+
+
+class TestIsHeaderFooter(unittest.TestCase):
+    """_is_header_footer should detect blocks in page margin zones."""
+
+    def _block(self, y0, y1):
+        return {"x0": 0, "y0": y0, "x1": 100, "y1": y1, "content": "text"}
+
+    def test_header_block_detected(self):
+        from pdf2zh.export_markdown import _is_header_footer
+        # block fully inside top 8% of 800pt page → y1 < 64
+        self.assertTrue(_is_header_footer(self._block(10, 30), page_height=800))
+
+    def test_footer_block_detected(self):
+        from pdf2zh.export_markdown import _is_header_footer
+        # block starts in bottom 8% of 800pt page → y0 > 736
+        self.assertTrue(_is_header_footer(self._block(750, 780), page_height=800))
+
+    def test_body_block_not_filtered(self):
+        from pdf2zh.export_markdown import _is_header_footer
+        # block in middle of page
+        self.assertFalse(_is_header_footer(self._block(200, 230), page_height=800))
+
+    def test_custom_margin(self):
+        from pdf2zh.export_markdown import _is_header_footer
+        # with 5% margin on 1000pt page, threshold is 50pt / 950pt
+        self.assertTrue(_is_header_footer(self._block(0, 45), page_height=1000, margin=0.05))
+        self.assertFalse(_is_header_footer(self._block(0, 55), page_height=1000, margin=0.05))
+
+    def test_header_filter_integrated(self):
+        """_extract_page_text_blocks should drop header/footer blocks."""
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        page = MagicMock()
+        page.rect.height = 800
+        page.get_text.return_value = [
+            (0, 5, 200, 30, "Page header", 0, 0),    # y1=30 < 64 → header
+            (0, 100, 400, 200, "Body content", 1, 0), # body
+            (0, 760, 200, 790, "Page 12", 2, 0),      # y0=760 > 736 → footer
+        ]
+        result = _extract_page_text_blocks(page)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "Body content")
+
+
+class TestExtractPageTextBlocks(unittest.TestCase):
+    """_extract_page_text_blocks should drop single-character and margin blocks."""
+
+    PAGE_HEIGHT = 800
+
+    def _make_page(self, raw_blocks):
+        """Return a mock pymupdf.Page whose get_text('blocks') returns raw_blocks.
+
+        page.rect.height is set to PAGE_HEIGHT so _is_header_footer can compare
+        block coordinates against a real number.
+        """
+        page = MagicMock()
+        page.rect.height = self.PAGE_HEIGHT
+        page.get_text.return_value = raw_blocks
+        return page
+
+    def test_normal_blocks_kept(self):
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        # Blocks placed in the middle of the page (y in 100–700 of 800pt)
+        page = self._make_page([
+            (0, 100, 100, 120, "Hello world", 0, 0),
+            (0, 200, 100, 220, "Second paragraph", 1, 0),
+        ])
+        result = _extract_page_text_blocks(page)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["content"], "Hello world")
+
+    def test_single_char_block_discarded(self):
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        page = self._make_page([
+            (0, 100, 5, 110, "A", 0, 0),   # single char — vertical text artefact
+            (0, 110, 5, 120, "|", 1, 0),   # pipe separator — also single char
+            (0, 200, 100, 400, "Real paragraph", 2, 0),
+        ])
+        result = _extract_page_text_blocks(page)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "Real paragraph")
+
+    def test_empty_block_discarded(self):
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        page = self._make_page([
+            (0, 100, 100, 120, "   ", 0, 0),  # whitespace only
+            (0, 200, 100, 400, "Content", 1, 0),
+        ])
+        result = _extract_page_text_blocks(page)
+        self.assertEqual(len(result), 1)
+
+    def test_two_char_block_kept(self):
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        page = self._make_page([
+            (0, 200, 20, 210, "OK", 0, 0),
+        ])
+        result = _extract_page_text_blocks(page)
+        self.assertEqual(len(result), 1)
 
 
 class TestParseElemFilename(unittest.TestCase):
