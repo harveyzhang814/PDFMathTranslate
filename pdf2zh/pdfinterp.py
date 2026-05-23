@@ -277,7 +277,9 @@ class PDFPageInterpreterEx(PDFPageInterpreter):
         if getattr(self.device, "page_is_scanned", False):
             page_w = abs(x1 - x0)
             page_h = abs(y1 - y0)
-            white_bg = f"1 1 1 rg 0 0 {page_w:f} {page_h:f} re f "
+            # Wrap in q/Q so the white fill color doesn't carry over to the
+            # translated text ops (rg sets nonstroking color which affects text too)
+            white_bg = f"q 1 1 1 rg 0 0 {page_w:f} {page_h:f} re f Q "
         else:
             white_bg = ""
         self.obj_patch[page.page_xref] = (
