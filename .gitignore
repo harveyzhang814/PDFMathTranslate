@@ -184,3 +184,4 @@ uv.lock
 !test/e2e/expected/*.pdf
 !test/e2e/expected/*.docx
 .worktrees/
+output/
