@@ -271,8 +271,19 @@ class PDFPageInterpreterEx(PDFPageInterpreter):
         self.device.fontmap = self.fontmap
         ops_new = self.device.end_page(page)
         # 上面渲染的时候会根据 cropbox 减掉页面偏移得到真实坐标，这里输出的时候需要用 cm 把页面偏移加回来
+        # For scanned PDFs the visible "text" is a bitmap image in ops_base.
+        # Insert a white rectangle that covers the whole page between the image
+        # and the translated text so the scan doesn't bleed through.
+        if getattr(self.device, "page_is_scanned", False):
+            page_w = abs(x1 - x0)
+            page_h = abs(y1 - y0)
+            # Wrap in q/Q so the white fill color doesn't carry over to the
+            # translated text ops (rg sets nonstroking color which affects text too)
+            white_bg = f"q 1 1 1 rg 0 0 {page_w:f} {page_h:f} re f Q "
+        else:
+            white_bg = ""
         self.obj_patch[page.page_xref] = (
-            f"q {ops_base}Q 1 0 0 1 {x0} {y0} cm {ops_new}"  # ops_base 里可能有图，需要让 ops_new 里的文字覆盖在上面，使用 q/Q 重置位置矩阵
+            f"q {ops_base}Q {white_bg}1 0 0 1 {x0} {y0} cm {ops_new}"  # ops_base 里可能有图，需要让 ops_new 里的文字覆盖在上面，使用 q/Q 重置位置矩阵
         )
         for obj in page.contents:
             self.obj_patch[obj.objid] = ""
