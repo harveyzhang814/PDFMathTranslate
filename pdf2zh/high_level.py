@@ -253,28 +253,6 @@ def translate_patch(
                     )
                     box[y0:y1, x0:x1] = 0
             layout[page.pageno] = box
-            # Detect scanned pages BEFORE replacing the content stream.
-            # If a full-page bitmap image covers ≥70% of the page, the visible
-            # "text" lives in the bitmap, not the PDF text layer.  The
-            # translator replaces the OCR text layer but cannot remove the
-            # bitmap, so without a white-fill rectangle the translated Chinese
-            # text would overlap the original English scan.  We set a flag here
-            # so that process_page() can insert the white rectangle between the
-            # image ops and the translated text.
-            # get_image_rects() requires the image to still be in the content
-            # stream, so this check must happen before set_contents() below.
-            mu_page = doc_zh[page.pageno]
-            page_area = mu_page.rect.width * mu_page.rect.height
-            device.page_is_scanned = False
-            if page_area > 0:
-                for img_info in mu_page.get_images(full=True):
-                    xref_img = img_info[0]
-                    rects = mu_page.get_image_rects(xref_img)
-                    if rects:
-                        img_area = rects[0].width * rects[0].height
-                        if img_area / page_area >= 0.7:
-                            device.page_is_scanned = True
-                            break
             # 新建一个 xref 存放新指令流
             page.page_xref = doc_zh.get_new_xref()  # hack 插入页面的新 xref
             doc_zh.update_object(page.page_xref, "<<>>")
@@ -389,10 +367,12 @@ def translate_stream(
     if not skip_subset_fonts:
         doc_zh.subset_fonts(fallback=True)
         doc_en.subset_fonts(fallback=True)
-    return (
-        doc_zh.write(deflate=True, garbage=3, use_objstms=1),
-        doc_en.write(deflate=True, garbage=3, use_objstms=1),
-    )
+    mono_bytes = doc_zh.write(deflate=True, garbage=3, use_objstms=1)
+    dual_bytes = doc_en.write(deflate=True, garbage=3, use_objstms=1)
+    # Post-process: blank scan backgrounds for scanned PDFs (no-op for normal PDFs)
+    from pdf2zh.debackground import debackground_scanned_pages
+    mono_bytes = debackground_scanned_pages(mono_bytes)
+    return mono_bytes, dual_bytes
 
 
 def convert_to_pdfa(input_path, output_path):
