@@ -121,6 +121,7 @@ def translate_patch(
         total_pages = doc_zh.page_count
 
     all_figure_boxes: list = []
+    all_table_page_coords: list = []  # table bboxes in pymupdf page coords for Markdown export
     all_caption_boxes: list = []
     all_figure_page_coords: list = []  # figure bboxes in pymupdf page coords for Word export
 
@@ -163,8 +164,8 @@ def translate_patch(
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     page_caption_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "pageno": pageno})
 
-            # Compute pixel→page scale and collect caption text + figure page coords
-            if figure_boxes or page_caption_boxes:
+            # Compute pixel→page scale and collect caption text + figure/table page coords
+            if figure_boxes or table_boxes or page_caption_boxes:
                 mupdf_page = doc_zh[pageno]
                 sx = mupdf_page.rect.width / pix.width if pix.width else 1.0
                 sy = mupdf_page.rect.height / pix.height if pix.height else 1.0
@@ -183,6 +184,17 @@ def translate_patch(
                         "y0": fig["y0"] * sy,
                         "x1": fig["x1"] * sx,
                         "y1": fig["y1"] * sy,
+                    })
+
+                for i, tbl in enumerate(table_boxes):
+                    all_table_page_coords.append({
+                        "pageno": pageno,
+                        "idx": i + 1,
+                        "image_file": f"p{pageno + 1}_table_{i + 1:03d}.png",
+                        "x0": tbl["x0"] * sx,
+                        "y0": tbl["y0"] * sy,
+                        "x1": tbl["x1"] * sx,
+                        "y1": tbl["y1"] * sy,
                     })
 
             all_figure_boxes.extend(figure_boxes)
@@ -241,28 +253,6 @@ def translate_patch(
                     )
                     box[y0:y1, x0:x1] = 0
             layout[page.pageno] = box
-            # Detect scanned pages BEFORE replacing the content stream.
-            # If a full-page bitmap image covers ≥70% of the page, the visible
-            # "text" lives in the bitmap, not the PDF text layer.  The
-            # translator replaces the OCR text layer but cannot remove the
-            # bitmap, so without a white-fill rectangle the translated Chinese
-            # text would overlap the original English scan.  We set a flag here
-            # so that process_page() can insert the white rectangle between the
-            # image ops and the translated text.
-            # get_image_rects() requires the image to still be in the content
-            # stream, so this check must happen before set_contents() below.
-            mu_page = doc_zh[page.pageno]
-            page_area = mu_page.rect.width * mu_page.rect.height
-            device.page_is_scanned = False
-            if page_area > 0:
-                for img_info in mu_page.get_images(full=True):
-                    xref_img = img_info[0]
-                    rects = mu_page.get_image_rects(xref_img)
-                    if rects:
-                        img_area = rects[0].width * rects[0].height
-                        if img_area / page_area >= 0.7:
-                            device.page_is_scanned = True
-                            break
             # 新建一个 xref 存放新指令流
             page.page_xref = doc_zh.get_new_xref()  # hack 插入页面的新 xref
             doc_zh.update_object(page.page_xref, "<<>>")
@@ -279,6 +269,14 @@ def translate_patch(
         os.makedirs(os.path.dirname(figures_json), exist_ok=True)
         with open(figures_json, "w", encoding="utf-8") as f:
             json.dump(all_figure_page_coords, f, indent=2)
+
+    # Save table bboxes in page coordinates for Markdown export text-block deduplication
+    if extract_elements and elements_output_dir and all_table_page_coords:
+        import json
+        tables_json = os.path.join(elements_output_dir, "elements", "tables.json")
+        os.makedirs(os.path.dirname(tables_json), exist_ok=True)
+        with open(tables_json, "w", encoding="utf-8") as f:
+            json.dump(all_table_page_coords, f, indent=2)
 
     # Build element manifest after all pages are processed
     if extract_elements and elements_output_dir and all_figure_boxes:
@@ -369,10 +367,12 @@ def translate_stream(
     if not skip_subset_fonts:
         doc_zh.subset_fonts(fallback=True)
         doc_en.subset_fonts(fallback=True)
-    return (
-        doc_zh.write(deflate=True, garbage=3, use_objstms=1),
-        doc_en.write(deflate=True, garbage=3, use_objstms=1),
-    )
+    mono_bytes = doc_zh.write(deflate=True, garbage=3, use_objstms=1)
+    dual_bytes = doc_en.write(deflate=True, garbage=3, use_objstms=1)
+    # Post-process: blank scan backgrounds for scanned PDFs (no-op for normal PDFs)
+    from pdf2zh.debackground import debackground_scanned_pages
+    mono_bytes = debackground_scanned_pages(mono_bytes)
+    return mono_bytes, dual_bytes
 
 
 def convert_to_pdfa(input_path, output_path):

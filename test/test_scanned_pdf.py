@@ -1,33 +1,39 @@
 """
-Tests for scanned-PDF overlap fix.
+Tests for pdf2zh/debackground.py
 
-Root cause: a scanned PDF has a full-page bitmap image as background and an OCR
-text layer on top.  Without a fix, translated text overlaps the visible scan.
+debackground_scanned_pages() is a post-processing step that runs after
+translate_stream().  It detects pages with a full-page bitmap background
+and inserts a white fill rectangle between the bitmap ops and the
+translated text, eliminating the scan-bleed overlap.
 
-Fix: two-part change:
-  1. high_level.py — detect full-page background images *before* set_contents()
-     replaces the page stream, and set device.page_is_scanned.
-  2. pdfinterp.py — in process_page(), insert a white-fill rectangle between
-     image ops (ops_base) and translated text (ops_new) when page_is_scanned.
-
-These tests verify each part independently without requiring the ONNX model or
-network access.
+All tests here are model-free: they build minimal PDFs directly with
+pymupdf and test the module in isolation.
 """
 
+from __future__ import annotations
+
 import io
+import re
 import struct
 import unittest
 import zlib
 
 import pymupdf
 
+from pdf2zh.debackground import (
+    SCAN_THRESHOLD,
+    _insert_white_rect,
+    _is_scanned_page,
+    debackground_scanned_pages,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_png_white(w: int, h: int) -> bytes:
-    """Return raw PNG bytes for a white w×h image."""
+def _make_png_white(w: int = 20, h: int = 20) -> bytes:
+    """Minimal white PNG."""
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         c = len(data).to_bytes(4, "big") + tag + data
@@ -35,23 +41,18 @@ def _make_png_white(w: int, h: int) -> bytes:
         return c + crc.to_bytes(4, "big")
 
     header = chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-    raw_rows = b"".join(b"\x00" + b"\xFF\xFF\xFF" * w for _ in range(h))
-    idat = chunk(b"IDAT", zlib.compress(raw_rows))
+    raw = b"".join(b"\x00" + b"\xff\xff\xff" * w for _ in range(h))
+    idat = chunk(b"IDAT", zlib.compress(raw))
     iend = chunk(b"IEND", b"")
     return b"\x89PNG\r\n\x1a\n" + header + idat + iend
 
 
 def _make_scanned_pdf(page_w: int = 200, page_h: int = 200) -> bytes:
-    """PDF with a full-page bitmap image + a short OCR text string.
-
-    This mimics a scanned document: the image covers 100% of the page, and
-    there is an invisible OCR text layer on top.
-    """
+    """PDF with a full-page image (simulates a scanned document)."""
     doc = pymupdf.open()
     page = doc.new_page(width=page_w, height=page_h)
-    img_rect = pymupdf.Rect(0, 0, page_w, page_h)
-    page.insert_image(img_rect, stream=_make_png_white(20, 20))
-    page.insert_text((10, 100), "Hello OCR", fontsize=12, color=(0, 0, 0))
+    page.insert_image(pymupdf.Rect(0, 0, page_w, page_h), stream=_make_png_white())
+    page.insert_text((10, 100), "OCR text", fontsize=10)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
@@ -61,175 +62,221 @@ def _make_text_only_pdf(page_w: int = 200, page_h: int = 200) -> bytes:
     """PDF with only text — no background image."""
     doc = pymupdf.open()
     page = doc.new_page(width=page_w, height=page_h)
-    page.insert_text((10, 100), "Normal text page", fontsize=12, color=(0, 0, 0))
+    page.insert_text((10, 100), "Normal text", fontsize=10)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
 
 def _make_small_image_pdf(page_w: int = 200, page_h: int = 200) -> bytes:
-    """PDF with a small image (10×10 pt on a 200×200 pt page → 0.25% area)."""
+    """PDF with a small image (5 % of page area) — should not trigger debackground."""
     doc = pymupdf.open()
     page = doc.new_page(width=page_w, height=page_h)
-    # Tiny image in corner — well below the 70% threshold
-    page.insert_image(pymupdf.Rect(0, 0, 10, 10), stream=_make_png_white(5, 5))
-    page.insert_text((10, 100), "Page with small image", fontsize=12, color=(0, 0, 0))
+    # 45x45 on 200x200 -> area ratio ~5%
+    page.insert_image(pymupdf.Rect(0, 0, 45, 45), stream=_make_png_white())
+    page.insert_text((10, 100), "Page with small image", fontsize=10)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
 
-# ---------------------------------------------------------------------------
-# Part 1: Detection logic in high_level.py
-# ---------------------------------------------------------------------------
+def _make_synthetic_translated_stream(page_w: float, page_h: float) -> bytes:
+    """Build a content stream that mimics the structure produced by
+    PDFPageInterpreterEx.process_page():
 
-class TestScannedPageDetection(unittest.TestCase):
-    """Tests for the 'is this page a scanned background?' detection logic.
+        q {ops_base} Q 1 0 0 1 {x0} {y0} cm {ops_new}
 
-    The logic is: get_images(full=True) + get_image_rects(xref) BEFORE
-    set_contents() replaces the stream; if any image area / page area ≥ 0.70,
-    page_is_scanned = True.
-
-    These tests do NOT call translate_stream (no model needed).
+    ops_base contains the bitmap draw call; ops_new is a minimal BT block.
     """
+    ops_base = f"q {page_w} 0 0 {page_h} 0 0 cm /Im0 Do Q "
+    ops_new = "BT /tiro 12 Tf 1 0 0 1 50 100 Tm [(Hello)] TJ ET "
+    raw = f"q {ops_base}Q 1 0 0 1 0 0 cm {ops_new}"
+    return raw.encode()
 
-    def _detect(self, pdf_bytes: bytes, pageno: int = 0) -> bool:
-        """Reproduce the detection logic from high_level.py translate_patch()."""
-        doc = pymupdf.open(stream=pdf_bytes)
-        mu_page = doc[pageno]
-        page_area = mu_page.rect.width * mu_page.rect.height
-        if page_area <= 0:
-            return False
-        for img_info in mu_page.get_images(full=True):
-            xref_img = img_info[0]
-            rects = mu_page.get_image_rects(xref_img)
-            if rects:
-                img_area = rects[0].width * rects[0].height
-                if img_area / page_area >= 0.7:
-                    return True
-        return False
 
-    def test_full_page_image_detected_as_scanned(self):
-        """A page where one image covers the entire page must be detected."""
-        pdf_bytes = _make_scanned_pdf()
-        self.assertTrue(
-            self._detect(pdf_bytes),
-            "Full-page image (ratio=1.0) must trigger scanned-page detection",
-        )
+# ---------------------------------------------------------------------------
+# Unit tests: _is_scanned_page
+# ---------------------------------------------------------------------------
 
-    def test_text_only_page_not_scanned(self):
-        """A page with no images must not be flagged."""
-        pdf_bytes = _make_text_only_pdf()
-        self.assertFalse(
-            self._detect(pdf_bytes),
-            "Text-only page (no images) must not trigger scanned-page detection",
-        )
+class TestIsScannedPage(unittest.TestCase):
+    """Tests for the per-page detection helper."""
 
-    def test_small_image_not_scanned(self):
-        """A page whose single image covers only a small fraction is not scanned."""
-        pdf_bytes = _make_small_image_pdf()
-        self.assertFalse(
-            self._detect(pdf_bytes),
-            "Small image (≪70% area) must not trigger scanned-page detection",
-        )
-
-    def test_detection_before_set_contents(self):
-        """Detection must still work when the page content stream is empty
-        (simulating the state BEFORE set_contents replacement)."""
-        # If detection were done AFTER set_contents the result would be False
-        # because get_image_rects() needs the Do operator in the content stream.
+    def test_full_page_image_is_scanned(self):
         doc = pymupdf.open(stream=_make_scanned_pdf())
-        mu_page = doc[0]
+        self.assertTrue(_is_scanned_page(doc[0]))
 
-        # Simulate set_contents replacing the content stream
-        new_xref = doc.get_new_xref()
-        doc.update_object(new_xref, "<<>>")
-        doc.update_stream(new_xref, b"")
-        mu_page.set_contents(new_xref)
+    def test_text_only_page_is_not_scanned(self):
+        doc = pymupdf.open(stream=_make_text_only_pdf())
+        self.assertFalse(_is_scanned_page(doc[0]))
 
-        # Detection should now FAIL (wrong order) — this is what we prevent
-        page_area = mu_page.rect.width * mu_page.rect.height
-        detected_after = False
-        for img_info in mu_page.get_images(full=True):
-            rects = mu_page.get_image_rects(img_info[0])
-            if rects:
-                if (rects[0].width * rects[0].height) / page_area >= 0.7:
-                    detected_after = True
-        self.assertFalse(
-            detected_after,
-            "After set_contents() the detection correctly returns False — "
-            "this confirms detection must happen BEFORE set_contents()",
-        )
+    def test_small_image_is_not_scanned(self):
+        doc = pymupdf.open(stream=_make_small_image_pdf())
+        self.assertFalse(_is_scanned_page(doc[0]))
+
+    def test_custom_threshold_respected(self):
+        """A ~50% image should be detected at threshold=0.4 but not 0.8."""
+        doc = pymupdf.open()
+        page = doc.new_page(width=200, height=200)
+        # 142x142 on 200x200 -> area ratio ~50%
+        page.insert_image(pymupdf.Rect(0, 0, 142, 142), stream=_make_png_white())
+        self.assertTrue(_is_scanned_page(page, threshold=0.4))
+        self.assertFalse(_is_scanned_page(page, threshold=0.8))
 
 
 # ---------------------------------------------------------------------------
-# Part 2: White-rectangle insertion in pdfinterp.py
+# Unit tests: _insert_white_rect
 # ---------------------------------------------------------------------------
 
-class TestWhiteRectInsertion(unittest.TestCase):
-    """Tests for the white-fill rectangle logic in PDFPageInterpreterEx.process_page().
+class TestInsertWhiteRect(unittest.TestCase):
+    """Tests for the content-stream surgery helper."""
 
-    We patch render_contents and device.end_page so no real translator or ONNX
-    model is needed.  The test only verifies the obj_patch string construction.
-    """
+    def test_white_rect_inserted_at_boundary(self):
+        stream = _make_synthetic_translated_stream(200.0, 300.0)
+        result = _insert_white_rect(stream, 200.0, 300.0)
+        self.assertIsNotNone(result)
+        self.assertIn(b"1 1 1 rg", result)
+        self.assertIn(b"re f", result)
 
-    def _build_patch(self, page_is_scanned: bool, page_w: float = 200.0, page_h: float = 200.0) -> str:
-        """Invoke the obj_patch string-building logic from process_page() directly."""
-        from unittest.mock import MagicMock, patch
-        from pdfminer.pdfinterp import PDFResourceManager
-        from pdf2zh.pdfinterp import PDFPageInterpreterEx
-
-        rsrcmgr = PDFResourceManager()
-        device = MagicMock()
-        device.page_is_scanned = page_is_scanned
-        device.end_page.return_value = "BT ET "  # stub translated text ops
-
-        obj_patch: dict = {}
-        interpreter = PDFPageInterpreterEx(rsrcmgr, device, obj_patch)
-
-        # Stub render_contents to return a minimal ops string (skips actual PDF parsing)
-        interpreter.render_contents = MagicMock(return_value="image_op ")
-        interpreter.fontid = {}
-        interpreter.fontmap = {}
-
-        # Fake PDFPage with the given dimensions
-        page = MagicMock()
-        page.cropbox = (0, 0, page_w, page_h)
-        page.rotate = 0
-        page.page_xref = 999
-
-        interpreter.process_page(page)
-        return obj_patch.get(999, "")
-
-    def test_scanned_page_has_white_rect_in_patch(self):
-        """When page_is_scanned=True, the obj_patch must contain the white-fill op."""
-        patch_str = self._build_patch(page_is_scanned=True)
-        self.assertIn(
-            "1 1 1 rg",
-            patch_str,
-            "White-fill color op '1 1 1 rg' must appear in obj_patch for scanned page",
-        )
-        self.assertIn(
-            "re f",
-            patch_str,
-            "White rectangle fill op 're f' must appear in obj_patch for scanned page",
-        )
-
-    def test_non_scanned_page_has_no_white_rect(self):
-        """When page_is_scanned=False, the obj_patch must NOT contain the white-fill op."""
-        patch_str = self._build_patch(page_is_scanned=False)
-        self.assertNotIn(
-            "1 1 1 rg",
-            patch_str,
-            "White-fill op must NOT appear in obj_patch for non-scanned page",
+    def test_white_rect_wraps_in_q_Q(self):
+        """The white rect must be wrapped in q/Q to isolate its colour state."""
+        stream = _make_synthetic_translated_stream(200.0, 300.0)
+        result = _insert_white_rect(stream, 200.0, 300.0)
+        self.assertRegex(
+            result.decode(),
+            r"q\s+1 1 1 rg\s+[\d. ]+re f Q",
         )
 
     def test_white_rect_covers_full_page(self):
-        """The white rectangle must span the full page dimensions."""
-        patch_str = self._build_patch(page_is_scanned=True, page_w=300.0, page_h=400.0)
-        # Check that the rect has the right dimensions (allow floating-point format)
-        self.assertIn("0 0 300", patch_str, "White rect x-dimension must match page width 300")
-        self.assertIn("400", patch_str, "White rect y-dimension must match page height 400")
+        """Rectangle dimensions must match the page size passed in."""
+        stream = _make_synthetic_translated_stream(594.0, 792.0)
+        result = _insert_white_rect(stream, 594.0, 792.0)
+        text = result.decode()
+        self.assertIn("0 0 594", text)
+        self.assertIn("792", text)
+
+    def test_translated_text_follows_white_rect(self):
+        """ops_new (BT block) must come AFTER the white rect, not before it."""
+        stream = _make_synthetic_translated_stream(200.0, 200.0)
+        result = _insert_white_rect(stream, 200.0, 200.0)
+        text = result.decode()
+        white_pos = text.index("1 1 1 rg")
+        bt_pos = text.index("BT /tiro")
+        self.assertLess(white_pos, bt_pos,
+                        "White rect must appear before the translated BT block")
+
+    def test_returns_none_for_unrecognised_stream(self):
+        """Should return None rather than corrupt an unrecognised stream."""
+        random_stream = b"BT /Helvetica 12 Tf (Hello) Tj ET"
+        self.assertIsNone(_insert_white_rect(random_stream, 200.0, 200.0))
+
+    def test_original_content_preserved(self):
+        """Bitmap draw call in ops_base must still be present in the output."""
+        stream = _make_synthetic_translated_stream(200.0, 200.0)
+        result = _insert_white_rect(stream, 200.0, 200.0)
+        self.assertIn(b"/Im0 Do", result)
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: debackground_scanned_pages
+# ---------------------------------------------------------------------------
+
+class TestDebackgroundScannedPages(unittest.TestCase):
+    """End-to-end tests for the public API."""
+
+    def _make_translated_pdf(self, has_full_page_image: bool) -> bytes:
+        """Build a PDF that looks like a translated mono PDF.
+
+        The content stream is crafted to match the structure produced by
+        process_page() so _insert_white_rect can find the boundary.
+
+        When has_full_page_image=True we insert a real image via pymupdf
+        first, then discover the XObject name pymupdf chose and build the
+        synthetic stream with that name so _is_scanned_page can find the
+        image rect in the content stream.
+        """
+        doc = pymupdf.open()
+        page = doc.new_page(width=200, height=200)
+
+        if has_full_page_image:
+            page.insert_image(pymupdf.Rect(0, 0, 200, 200), stream=_make_png_white())
+            # Save + reopen so the image xref is committed and queryable
+            buf = io.BytesIO()
+            doc.save(buf)
+            doc = pymupdf.open(stream=buf.getvalue())
+            page = doc[0]
+
+            # Discover the actual XObject name pymupdf assigned
+            imgs = page.get_images(full=True)
+            # img_info[7] is the name used in the content stream ('Im0', etc.)
+            xobj_name = imgs[0][7] if imgs else "Im0"
+
+            # Build synthetic content stream referencing the real XObject name
+            ops_base = f"q 200 0 0 200 0 0 cm /{xobj_name} Do Q "
+            ops_new = "BT /tiro 12 Tf 1 0 0 1 50 100 Tm [(Hello)] TJ ET "
+            synthetic = f"q {ops_base}Q 1 0 0 1 0 0 cm {ops_new}".encode()
+
+            xref = page.get_contents()[0]
+            doc.update_stream(xref, synthetic)
+        else:
+            # Text-only: just a synthetic stream without any image Do.
+            # Insert a dummy character so pymupdf creates a content stream
+            # (a brand-new blank page has no content stream xref).
+            page.insert_text((10, 100), "placeholder", fontsize=10)
+            buf = io.BytesIO()
+            doc.save(buf)
+            doc = pymupdf.open(stream=buf.getvalue())
+            page = doc[0]
+            ops_new = "BT /tiro 12 Tf 1 0 0 1 50 100 Tm [(Hello)] TJ ET "
+            synthetic = f"q Q 1 0 0 1 0 0 cm {ops_new}".encode()
+            xref = page.get_contents()[0]
+            doc.update_stream(xref, synthetic)
+
+        out = io.BytesIO()
+        doc.save(out)
+        return out.getvalue()
+
+    def test_scanned_page_gets_white_rect(self):
+        pdf = self._make_translated_pdf(has_full_page_image=True)
+        result = debackground_scanned_pages(pdf)
+        doc = pymupdf.open(stream=result)
+        stream = doc.xref_stream(doc[0].get_contents()[0])
+        self.assertIn(b"1 1 1 rg", stream,
+                      "White fill rect must be present for a scanned page")
+
+    def test_normal_page_unchanged(self):
+        """Non-scanned pages must return the same bytes."""
+        pdf = self._make_translated_pdf(has_full_page_image=False)
+        result = debackground_scanned_pages(pdf)
+        self.assertEqual(pdf, result,
+                         "Bytes must be unchanged for a page with no full-page image")
+
+    def test_mixed_pdf_only_scanned_pages_modified(self):
+        """In a multi-page PDF only the scanned pages should be changed."""
+        scanned = self._make_translated_pdf(has_full_page_image=True)
+        normal = self._make_translated_pdf(has_full_page_image=False)
+
+        doc_combined = pymupdf.open()
+        doc_combined.insert_pdf(pymupdf.open(stream=scanned))
+        doc_combined.insert_pdf(pymupdf.open(stream=normal))
+        buf = io.BytesIO()
+        doc_combined.save(buf)
+
+        result = debackground_scanned_pages(buf.getvalue())
+        doc_result = pymupdf.open(stream=result)
+
+        stream_p0 = doc_result.xref_stream(doc_result[0].get_contents()[0])
+        stream_p1 = doc_result.xref_stream(doc_result[1].get_contents()[0])
+
+        self.assertIn(b"1 1 1 rg", stream_p0,
+                      "Scanned page 0 must have the white rect")
+        self.assertNotIn(b"1 1 1 rg", stream_p1,
+                         "Normal page 1 must NOT have the white rect")
+
+    def test_threshold_parameter(self):
+        """threshold=2.0 (impossible ratio) should leave the PDF unchanged."""
+        pdf = self._make_translated_pdf(has_full_page_image=True)
+        result = debackground_scanned_pages(pdf, threshold=2.0)
+        self.assertEqual(pdf, result)
 
 
 if __name__ == "__main__":
