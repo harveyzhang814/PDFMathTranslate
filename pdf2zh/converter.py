@@ -218,6 +218,7 @@ class TranslateConverter(PDFConverterEx):
         xt: LTChar = None               # 上一个字符
         xt_cls: int = -1                # 上一个字符所属段落，保证无论第一个字符属于哪个类别都可以触发新段落
         vmax: float = ltpage.width / 4  # 行内公式最大宽度
+        drop_cap_cascade: bool = False  # len==1 向下修正后，允许再一次级联修正（处理三级字号：drop cap → 中间字号 → 正文）
         ops: str = ""                   # 渲染结果
 
         def vflag(font: str, char: str):    # 匹配公式（和角标）字体
@@ -235,7 +236,7 @@ class TranslateConverter(PDFConverterEx):
                     return True
             else:
                 if re.match(                                            # latex 字体
-                    r"(CM[^R]|MS.M|XY|MT|BL|RM|EU|LA|RS|LINE|LCIRCLE|TeX-|rsfs|txsy|wasy|stmary|.*Mono|.*Code|.*Ital|.*Sym|.*Math)",
+                    r"(CM[^R]|MS.M|XY|MT|BL|RM|EU|LA|RS|LINE|LCIRCLE|TeX-|rsfs|txsy|wasy|stmary|.*Mono|.*Code|.*Sym|.*Math)",
                     font,
                 ):
                     return True
@@ -271,9 +272,11 @@ class TranslateConverter(PDFConverterEx):
                 if child.get_text() == "•":
                     cls = 0
                 # 判定当前字符是否属于公式
+                # drop_cap_cascade=True 时暂时抑制角标判定：drop cap 引发的级联字号变化期间，下一个字符不应被误判为角标
+                _is_subscript = (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79 and not drop_cap_cascade) if pstk else False
                 if (                                                                                        # 判定当前字符是否属于公式
                     cls == 0                                                                                # 1. 类别为保留区域
-                    or (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79)  # 2. 角标字体，有 0.76 的角标和 0.799 的大写，这里用 0.79 取中，同时考虑首字母放大的情况
+                    or _is_subscript                                                                        # 2. 角标字体，有 0.76 的角标和 0.799 的大写，这里用 0.79 取中，同时考虑首字母放大的情况
                     or vflag(child.fontname, child.get_text())                                              # 3. 公式字体
                     or (child.matrix[0] == 0 and child.matrix[3] == 0)                                      # 4. 垂直字体
                 ):
@@ -322,13 +325,21 @@ class TranslateConverter(PDFConverterEx):
                     else:                           # 根据当前字符构建一个新的段落
                         sstk.append("")
                         pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False))
+                        drop_cap_cascade = False     # 新段落重置级联标志
                 if not cur_v:                                               # 文字入栈
+                    is_len1 = len(sstk[-1].strip()) == 1
                     if (                                                    # 根据当前字符修正段落属性
-                        child.size > pstk[-1].size                          # 1. 当前字符比段落字体大
-                        or len(sstk[-1].strip()) == 1                       # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
-                    ) and child.get_text() != " ":                          # 3. 当前字符不是空格
-                        pstk[-1].y -= child.size - pstk[-1].size            # 修正段落初始纵坐标，假设两个不同大小字符的上边界对齐
+                        (child.size > pstk[-1].size and child.size < pstk[-1].size * 1.3)  # 1. 当前字符适度大于段落字体（上限1.3倍，防止drop cap/装饰字母污染参考尺寸）
+                        or is_len1                                          # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
+                        or drop_cap_cascade                                 # 3. drop cap 级联：第二个文字向下更新了字号，允许第三个文字再更新一次
+                    ) and child.get_text() != " ":                          # 4. 当前字符不是空格
+                        old_size = pstk[-1].size
+                        pstk[-1].y -= child.size - old_size                 # 修正段落初始纵坐标，假设两个不同大小字符的上边界对齐
                         pstk[-1].size = child.size
+                        # 若 len==1 且本次是向下修正（drop cap → 中间字号），标记允许再一次级联修正
+                        drop_cap_cascade = is_len1 and child.size < old_size
+                    elif child.get_text() != " ":                           # 空格字符不重置级联标志，保留到下一个非空格字符
+                        drop_cap_cascade = False
                     sstk[-1] += child.get_text()
                 else:                                                       # 公式入栈
                     if (                                                    # 根据公式左侧的文字修正公式的纵向偏移
