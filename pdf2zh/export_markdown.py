@@ -33,6 +33,88 @@ CAPTION_KEYWORDS = [
 # wrapped line and should be joined to the next block.
 _SENTENCE_ENDS = frozenset(".!?。！？…」』\"'")
 
+# Unicode range for CJK Unified Ideographs and common CJK extensions.
+_CJK_RANGES = (
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs
+    (0x3400, 0x4DBF),   # CJK Extension A
+    (0x20000, 0x2A6DF),  # CJK Extension B
+    (0x2A700, 0x2B73F),  # CJK Extension C
+    (0xF900, 0xFAFF),   # CJK Compatibility Ideographs
+    (0x2F800, 0x2FA1F),  # CJK Compatibility Supplement
+    (0x3000, 0x303F),   # CJK Symbols and Punctuation
+    (0xFF00, 0xFFEF),   # Halfwidth and Fullwidth Forms
+)
+
+
+# Matches one or more trailing uppercase ASCII letters at the end of a string.
+# Used to detect all-caps abbreviations that were split at a column edge.
+_RE_TRAILING_CAPS = re.compile(r"[A-Z]+$")
+
+
+def _is_cjk(ch: str) -> bool:
+    """Return True if the character is a CJK character."""
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _normalize_block_text(text: str) -> str:
+    """Collapse intra-block soft line-breaks into a single paragraph string.
+
+    pymupdf's ``get_text("blocks")`` inserts ``\\n`` at every visual line
+    boundary inside a block.  For Markdown output these are soft wraps and
+    should be removed — Obsidian (and many other renderers) treat a bare ``\\n``
+    as a ``<br>``, which fragments what should be a single flowing paragraph.
+
+    Joining rules per line boundary (evaluated in order):
+    - Hyphenated break (``word-\\n``): remove the ``-`` and concatenate directly.
+    - CJK character ending: concatenate directly (no space between CJK chars).
+    - Next line starts with a lowercase ASCII letter: concatenate directly
+      (mid-word continuation, e.g. ``"Quac\\nkenbush"`` → ``"Quackenbush"``).
+    - Digit ending + digit/comma start: concatenate directly
+      (year/number continuation, e.g. ``"20\\n17"`` → ``"2017"``,
+      ``"12\\n,850"`` → ``"12,850"``).
+    - Any other character: join with a single space (preserve English word boundary).
+    """
+    lines = text.split("\n")
+    result = []
+    for i, line in enumerate(lines):
+        if i == 0:
+            result.append(line)
+            continue
+        prev = result[-1]
+        if not prev:
+            # Preserve intentional blank separator lines
+            result.append(line)
+            continue
+        last_ch = prev[-1] if prev else ""
+        first_ch = line.lstrip()[:1] if line.lstrip() else ""
+        if last_ch == "-":
+            # Hard-hyphen line break: remove hyphen, glue directly
+            result[-1] = prev[:-1] + line
+        elif last_ch and _is_cjk(last_ch):
+            # CJK: no space needed between characters
+            result[-1] = prev + line
+        elif first_ch and first_ch.islower() and first_ch.isascii():
+            # Mid-word English continuation (e.g. "Quac\nkenbush")
+            result[-1] = prev.rstrip() + line.lstrip()
+        elif last_ch.isdigit() and (first_ch.isdigit() or first_ch == ","):
+            # Number continuation: year split ("20\n17") or thousands sep ("12\n,850")
+            result[-1] = prev.rstrip() + line.lstrip()
+        elif (
+            last_ch.isupper() and last_ch.isascii()
+            and first_ch.isupper() and first_ch.isascii()
+            and bool(_RE_TRAILING_CAPS.search(prev.rstrip()))
+        ):
+            # All-caps abbreviation split ("SL\nR" → "SLR", "UNC\nTAD" → "UNCTAD").
+            # Use a regex on the tail of prev rather than split() so that CJK-joined
+            # text (which has no spaces between characters) doesn't inflate the last
+            # "split token" and cause isupper() to return False.
+            result[-1] = prev.rstrip() + line.lstrip()
+        else:
+            # Latin / other: preserve word boundary with a space
+            result[-1] = prev + (" " if line else "") + line
+    return "\n".join(result)
+
 
 def _merge_broken_lines(blocks: List[dict]) -> List[dict]:
     """Join adjacent blocks that were split by PDF soft line-wrapping.
@@ -207,7 +289,10 @@ def _extract_page_text_blocks(
     ph = page.rect.height
     blocks = page.get_text("blocks")
     candidates = [
-        {"x0": b[0], "y0": b[1], "x1": b[2], "y1": b[3], "content": b[4].strip()}
+        {
+            "x0": b[0], "y0": b[1], "x1": b[2], "y1": b[3],
+            "content": _normalize_block_text(b[4].strip()),
+        }
         for b in blocks
         if len(b[4].strip()) > 1 and not _is_vertical_text_block(b[4])
     ]

@@ -116,6 +116,115 @@ class TestBlockOverlapsElement(unittest.TestCase):
         self.assertEqual(result[0]["content"], "Normal paragraph")
 
 
+class TestNormalizeBlockText(unittest.TestCase):
+    """_normalize_block_text should collapse intra-block soft line breaks."""
+
+    def test_uppercase_next_line_joined_with_space(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Next lines start with uppercase → joined with a space (word boundary)
+        text = "End of phrase\nBeginning of next\nAnd another"
+        self.assertEqual(
+            _normalize_block_text(text),
+            "End of phrase Beginning of next And another",
+        )
+
+    def test_lowercase_next_line_glued_directly(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Next line starts with lowercase ASCII → glue directly (mid-word split)
+        # e.g. "Quac\nkenbush" within the same block
+        text = "This is propos\nition of the theory"
+        self.assertEqual(
+            _normalize_block_text(text),
+            "This is proposition of the theory",
+        )
+
+    def test_hyphenated_break_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "meth-\nod" → "method"
+        text = "The meth-\nod is applied"
+        self.assertEqual(_normalize_block_text(text), "The method is applied")
+
+    def test_cjk_lines_joined_without_space(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Chinese characters: no space should be inserted
+        text = "这是一段\n很长的中文\n句子"
+        self.assertEqual(_normalize_block_text(text), "这是一段很长的中文句子")
+
+    def test_single_line_unchanged(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        text = "No newlines here"
+        self.assertEqual(_normalize_block_text(text), "No newlines here")
+
+    def test_empty_string(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        self.assertEqual(_normalize_block_text(""), "")
+
+    def test_trailing_newline_stripped_context(self):
+        """After strip(), trailing newline is gone; normalization handles the rest."""
+        from pdf2zh.export_markdown import _normalize_block_text
+        # strip() is applied before _normalize_block_text in the pipeline,
+        # but test that a trailing \n line (empty) doesn't add a trailing space
+        text = "Line one\nLine two"
+        result = _normalize_block_text(text)
+        self.assertFalse(result.endswith(" "))
+
+    def test_mixed_english_and_cjk(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # CJK ending → no space; then English continues
+        text = "实验结果表明\nthe accuracy is high"
+        result = _normalize_block_text(text)
+        # CJK line ends → joined directly
+        self.assertEqual(result, "实验结果表明the accuracy is high")
+
+    def test_intra_block_mid_word_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "Quac\nkenbush" should become "Quackenbush" (no space)
+        text = "（Quac\nkenbush，2018）"
+        self.assertEqual(_normalize_block_text(text), "（Quackenbush，2018）")
+
+    def test_new_sentence_after_period_gets_space(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Next line starts uppercase → join with space
+        text = "End of sentence.\nNew sentence here."
+        self.assertEqual(_normalize_block_text(text), "End of sentence. New sentence here.")
+
+    def test_year_split_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "20\n17" → "2017"
+        text = "（Radhakrishnan 等，20\n17）"
+        self.assertEqual(_normalize_block_text(text), "（Radhakrishnan 等，2017）")
+
+    def test_thousands_separator_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "12\n,850" → "12,850"
+        text = "共 12\n,850 种期刊"
+        self.assertEqual(_normalize_block_text(text), "共 12,850 种期刊")
+
+    def test_digit_before_uppercase_not_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "10\nFlow theory" is a table row → keep space
+        text = "10\nFlow theory"
+        self.assertEqual(_normalize_block_text(text), "10 Flow theory")
+
+    def test_allcaps_abbreviation_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "SL\nR" → "SLR"
+        text = "We used SL\nR in our review"
+        self.assertEqual(_normalize_block_text(text), "We used SLR in our review")
+
+    def test_allcaps_abbreviation_unctad(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "UNC\nTAD" → "UNCTAD"
+        text = "data from UNC\nTAD database"
+        self.assertEqual(_normalize_block_text(text), "data from UNCTAD database")
+
+    def test_mixed_case_word_not_glued_as_abbreviation(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "United States\nOf" → "United States Of" (last word "States" not all-caps)
+        text = "United States\nOf America"
+        self.assertEqual(_normalize_block_text(text), "United States Of America")
+
+
 class TestMergeBrokenLines(unittest.TestCase):
     """_merge_broken_lines should join soft-wrapped English mid-word splits."""
 
