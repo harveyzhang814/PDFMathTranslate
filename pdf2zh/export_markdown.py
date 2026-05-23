@@ -8,12 +8,13 @@ Pipeline:
 4. Sort by reading order (column-aware geometric sort)
 5. Assemble Markdown: paragraphs, image wikilinks, italic captions, --- page separators
 """
+import json
 import logging
 import os
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pymupdf
@@ -31,6 +32,88 @@ CAPTION_KEYWORDS = [
 # A block whose last non-space character is NOT in this set may be a soft-
 # wrapped line and should be joined to the next block.
 _SENTENCE_ENDS = frozenset(".!?。！？…」』\"'")
+
+# Unicode range for CJK Unified Ideographs and common CJK extensions.
+_CJK_RANGES = (
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs
+    (0x3400, 0x4DBF),   # CJK Extension A
+    (0x20000, 0x2A6DF),  # CJK Extension B
+    (0x2A700, 0x2B73F),  # CJK Extension C
+    (0xF900, 0xFAFF),   # CJK Compatibility Ideographs
+    (0x2F800, 0x2FA1F),  # CJK Compatibility Supplement
+    (0x3000, 0x303F),   # CJK Symbols and Punctuation
+    (0xFF00, 0xFFEF),   # Halfwidth and Fullwidth Forms
+)
+
+
+# Matches one or more trailing uppercase ASCII letters at the end of a string.
+# Used to detect all-caps abbreviations that were split at a column edge.
+_RE_TRAILING_CAPS = re.compile(r"[A-Z]+$")
+
+
+def _is_cjk(ch: str) -> bool:
+    """Return True if the character is a CJK character."""
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _normalize_block_text(text: str) -> str:
+    """Collapse intra-block soft line-breaks into a single paragraph string.
+
+    pymupdf's ``get_text("blocks")`` inserts ``\\n`` at every visual line
+    boundary inside a block.  For Markdown output these are soft wraps and
+    should be removed — Obsidian (and many other renderers) treat a bare ``\\n``
+    as a ``<br>``, which fragments what should be a single flowing paragraph.
+
+    Joining rules per line boundary (evaluated in order):
+    - Hyphenated break (``word-\\n``): remove the ``-`` and concatenate directly.
+    - CJK character ending: concatenate directly (no space between CJK chars).
+    - Next line starts with a lowercase ASCII letter: concatenate directly
+      (mid-word continuation, e.g. ``"Quac\\nkenbush"`` → ``"Quackenbush"``).
+    - Digit ending + digit/comma start: concatenate directly
+      (year/number continuation, e.g. ``"20\\n17"`` → ``"2017"``,
+      ``"12\\n,850"`` → ``"12,850"``).
+    - Any other character: join with a single space (preserve English word boundary).
+    """
+    lines = text.split("\n")
+    result = []
+    for i, line in enumerate(lines):
+        if i == 0:
+            result.append(line)
+            continue
+        prev = result[-1]
+        if not prev:
+            # Preserve intentional blank separator lines
+            result.append(line)
+            continue
+        last_ch = prev[-1] if prev else ""
+        first_ch = line.lstrip()[:1] if line.lstrip() else ""
+        if last_ch == "-":
+            # Hard-hyphen line break: remove hyphen, glue directly
+            result[-1] = prev[:-1] + line
+        elif last_ch and _is_cjk(last_ch):
+            # CJK: no space needed between characters
+            result[-1] = prev + line
+        elif first_ch and first_ch.islower() and first_ch.isascii():
+            # Mid-word English continuation (e.g. "Quac\nkenbush")
+            result[-1] = prev.rstrip() + line.lstrip()
+        elif last_ch.isdigit() and (first_ch.isdigit() or first_ch == ","):
+            # Number continuation: year split ("20\n17") or thousands sep ("12\n,850")
+            result[-1] = prev.rstrip() + line.lstrip()
+        elif (
+            last_ch.isupper() and last_ch.isascii()
+            and first_ch.isupper() and first_ch.isascii()
+            and bool(_RE_TRAILING_CAPS.search(prev.rstrip()))
+        ):
+            # All-caps abbreviation split ("SL\nR" → "SLR", "UNC\nTAD" → "UNCTAD").
+            # Use a regex on the tail of prev rather than split() so that CJK-joined
+            # text (which has no spaces between characters) doesn't inflate the last
+            # "split token" and cause isupper() to return False.
+            result[-1] = prev.rstrip() + line.lstrip()
+        else:
+            # Latin / other: preserve word boundary with a space
+            result[-1] = prev + (" " if line else "") + line
+    return "\n".join(result)
 
 
 def _merge_broken_lines(blocks: List[dict]) -> List[dict]:
@@ -99,6 +182,58 @@ def _is_caption(text: str) -> bool:
     )
 
 
+def _load_element_bboxes(elements_subdir: str) -> Dict[int, List[dict]]:
+    """Load figure and table bounding boxes from elements/ and index by page number.
+
+    Reads ``figures.json`` (figures) and ``tables.json`` (tables) when present.
+    Both files store entries with the shape::
+
+        {"pageno": <int 0-based>, "x0": ..., "y0": ..., "x1": ..., "y1": ...}
+
+    Returns a dict keyed by 0-based page number, each value a list of bbox dicts.
+    Returns an empty dict when the directory or files are missing.
+    """
+    result: Dict[int, List[dict]] = {}
+    for fname in ("figures.json", "tables.json"):
+        fpath = os.path.join(elements_subdir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, encoding="utf-8") as f:
+            for entry in json.load(f):
+                pageno = entry["pageno"]
+                result.setdefault(pageno, []).append(entry)
+    return result
+
+
+def _block_overlaps_element(block: dict, elem_bboxes: List[dict], threshold: float = 0.5) -> bool:
+    """Return True when the block overlaps significantly with any captured element region.
+
+    Uses intersection-over-block-area (IoB) so that a small text block
+    sitting entirely inside a large element region is filtered, while a
+    text block that merely grazes the element boundary is kept.
+
+    Args:
+        block: text block with keys x0/y0/x1/y1
+        elem_bboxes: list of element bboxes for the same page
+        threshold: minimum IoB ratio to consider an overlap (default 0.5)
+    """
+    bw = max(block["x1"] - block["x0"], 0)
+    bh = max(block["y1"] - block["y0"], 0)
+    block_area = bw * bh
+    if block_area <= 0:
+        return False
+
+    for elem in elem_bboxes:
+        ix0 = max(block["x0"], elem["x0"])
+        iy0 = max(block["y0"], elem["y0"])
+        ix1 = min(block["x1"], elem["x1"])
+        iy1 = min(block["y1"], elem["y1"])
+        inter_area = max(0, ix1 - ix0) * max(0, iy1 - iy0)
+        if inter_area / block_area >= threshold:
+            return True
+    return False
+
+
 def _is_header_footer(block: dict, page_height: float, margin: float = 0.08) -> bool:
     """Return True when a block sits inside the top or bottom margin of a page.
 
@@ -131,24 +266,40 @@ def _is_vertical_text_block(text: str) -> bool:
     return avg_len <= 2.0
 
 
-def _extract_page_text_blocks(page: pymupdf.Page) -> List[dict]:
+def _extract_page_text_blocks(
+    page: pymupdf.Page,
+    elem_bboxes: Optional[List[dict]] = None,
+) -> List[dict]:
     """Extract text blocks with positions from a pymupdf page.
 
-    Filters applied:
+    Filters applied (in order):
     1. Empty / single-character blocks are discarded.
     2. Vertical-text blocks (avg line length ≤ 2, ≥ 5 lines) are discarded:
        they arise from rotated/vertical text such as journal watermarks and
        DOI sidebars where every glyph is on its own line within the block.
     3. Header/footer blocks (top or bottom 8 % of page height) are discarded.
+    4. Blocks that overlap ≥ 50 % with a captured figure/table element region
+       are discarded — they are duplicate text from an already-rendered image.
+
+    Args:
+        page: pymupdf page to extract from
+        elem_bboxes: list of element bounding boxes for this page (from
+            figures.json / tables.json).  Pass None or [] to skip filter 4.
     """
     ph = page.rect.height
     blocks = page.get_text("blocks")
     candidates = [
-        {"x0": b[0], "y0": b[1], "x1": b[2], "y1": b[3], "content": b[4].strip()}
+        {
+            "x0": b[0], "y0": b[1], "x1": b[2], "y1": b[3],
+            "content": _normalize_block_text(b[4].strip()),
+        }
         for b in blocks
         if len(b[4].strip()) > 1 and not _is_vertical_text_block(b[4])
     ]
-    return [b for b in candidates if not _is_header_footer(b, ph)]
+    candidates = [b for b in candidates if not _is_header_footer(b, ph)]
+    if elem_bboxes:
+        candidates = [b for b in candidates if not _block_overlaps_element(b, elem_bboxes)]
+    return candidates
 
 
 def export_pdf_to_markdown(
@@ -185,6 +336,11 @@ def export_pdf_to_markdown(
                     str(images_dir / fname),
                 )
 
+    # Load figure + table bboxes so we can suppress duplicate text inside images
+    all_elem_bboxes: Dict[int, List[dict]] = (
+        _load_element_bboxes(elements_subdir) if elements_subdir else {}
+    )
+
     lines: List[str] = []
 
     with pymupdf.open(pdf_mono_path) as doc_mono:
@@ -208,7 +364,7 @@ def export_pdf_to_markdown(
 
             next_elem_idx: dict = {"figure": 1, "table": 1}
 
-            blocks = _extract_page_text_blocks(page)
+            blocks = _extract_page_text_blocks(page, all_elem_bboxes.get(pageno))
             if not blocks:
                 # No text: dump all images for this page
                 for ef in elem_files:

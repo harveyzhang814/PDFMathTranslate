@@ -121,6 +121,7 @@ def translate_patch(
         total_pages = doc_zh.page_count
 
     all_figure_boxes: list = []
+    all_table_page_coords: list = []  # table bboxes in pymupdf page coords for Markdown export
     all_caption_boxes: list = []
     all_figure_page_coords: list = []  # figure bboxes in pymupdf page coords for Word export
 
@@ -163,8 +164,8 @@ def translate_patch(
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     page_caption_boxes.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "pageno": pageno})
 
-            # Compute pixel→page scale and collect caption text + figure page coords
-            if figure_boxes or page_caption_boxes:
+            # Compute pixel→page scale and collect caption text + figure/table page coords
+            if figure_boxes or table_boxes or page_caption_boxes:
                 mupdf_page = doc_zh[pageno]
                 sx = mupdf_page.rect.width / pix.width if pix.width else 1.0
                 sy = mupdf_page.rect.height / pix.height if pix.height else 1.0
@@ -183,6 +184,17 @@ def translate_patch(
                         "y0": fig["y0"] * sy,
                         "x1": fig["x1"] * sx,
                         "y1": fig["y1"] * sy,
+                    })
+
+                for i, tbl in enumerate(table_boxes):
+                    all_table_page_coords.append({
+                        "pageno": pageno,
+                        "idx": i + 1,
+                        "image_file": f"p{pageno + 1}_table_{i + 1:03d}.png",
+                        "x0": tbl["x0"] * sx,
+                        "y0": tbl["y0"] * sy,
+                        "x1": tbl["x1"] * sx,
+                        "y1": tbl["y1"] * sy,
                     })
 
             all_figure_boxes.extend(figure_boxes)
@@ -257,6 +269,14 @@ def translate_patch(
         os.makedirs(os.path.dirname(figures_json), exist_ok=True)
         with open(figures_json, "w", encoding="utf-8") as f:
             json.dump(all_figure_page_coords, f, indent=2)
+
+    # Save table bboxes in page coordinates for Markdown export text-block deduplication
+    if extract_elements and elements_output_dir and all_table_page_coords:
+        import json
+        tables_json = os.path.join(elements_output_dir, "elements", "tables.json")
+        os.makedirs(os.path.dirname(tables_json), exist_ok=True)
+        with open(tables_json, "w", encoding="utf-8") as f:
+            json.dump(all_table_page_coords, f, indent=2)
 
     # Build element manifest after all pages are processed
     if extract_elements and elements_output_dir and all_figure_boxes:

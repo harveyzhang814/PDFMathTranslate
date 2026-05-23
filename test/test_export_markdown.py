@@ -1,5 +1,228 @@
+import json
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+
+
+class TestLoadElementBboxes(unittest.TestCase):
+    """_load_element_bboxes should read figures.json and tables.json."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir)
+
+    def _write(self, fname, data):
+        path = os.path.join(self.tmpdir, fname)
+        with open(path, "w") as f:
+            json.dump(data, f)
+
+    def test_loads_figures_json(self):
+        from pdf2zh.export_markdown import _load_element_bboxes
+        self._write("figures.json", [
+            {"pageno": 0, "idx": 1, "image_file": "p1_figure_001.png",
+             "x0": 10, "y0": 20, "x1": 200, "y1": 300},
+        ])
+        result = _load_element_bboxes(self.tmpdir)
+        self.assertIn(0, result)
+        self.assertEqual(len(result[0]), 1)
+        self.assertEqual(result[0][0]["image_file"], "p1_figure_001.png")
+
+    def test_loads_tables_json(self):
+        from pdf2zh.export_markdown import _load_element_bboxes
+        self._write("tables.json", [
+            {"pageno": 4, "idx": 1, "image_file": "p5_table_001.png",
+             "x0": 50, "y0": 60, "x1": 500, "y1": 250},
+        ])
+        result = _load_element_bboxes(self.tmpdir)
+        self.assertIn(4, result)
+        self.assertEqual(result[4][0]["image_file"], "p5_table_001.png")
+
+    def test_merges_figures_and_tables(self):
+        from pdf2zh.export_markdown import _load_element_bboxes
+        self._write("figures.json", [
+            {"pageno": 2, "idx": 1, "image_file": "p3_figure_001.png",
+             "x0": 0, "y0": 0, "x1": 100, "y1": 100},
+        ])
+        self._write("tables.json", [
+            {"pageno": 2, "idx": 1, "image_file": "p3_table_001.png",
+             "x0": 200, "y0": 200, "x1": 400, "y1": 400},
+        ])
+        result = _load_element_bboxes(self.tmpdir)
+        self.assertEqual(len(result[2]), 2)
+
+    def test_missing_files_return_empty(self):
+        from pdf2zh.export_markdown import _load_element_bboxes
+        result = _load_element_bboxes(self.tmpdir)
+        self.assertEqual(result, {})
+
+
+class TestBlockOverlapsElement(unittest.TestCase):
+    """_block_overlaps_element should detect IoB ≥ threshold."""
+
+    def _b(self, x0, y0, x1, y1):
+        return {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "content": "text"}
+
+    def _e(self, x0, y0, x1, y1):
+        return {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "pageno": 0}
+
+    def test_full_containment_detected(self):
+        from pdf2zh.export_markdown import _block_overlaps_element
+        block = self._b(100, 100, 200, 150)   # 100×50 block
+        elem  = self._e(50, 50, 300, 300)     # element fully contains block
+        self.assertTrue(_block_overlaps_element(block, [elem]))
+
+    def test_no_overlap(self):
+        from pdf2zh.export_markdown import _block_overlaps_element
+        block = self._b(0, 0, 50, 50)
+        elem  = self._e(100, 100, 200, 200)
+        self.assertFalse(_block_overlaps_element(block, [elem]))
+
+    def test_partial_overlap_below_threshold(self):
+        from pdf2zh.export_markdown import _block_overlaps_element
+        # block 100×100, element covers only 20×100 = 20% of block area
+        block = self._b(0, 0, 100, 100)
+        elem  = self._e(80, 0, 200, 100)     # intersection 20×100 = 20%
+        self.assertFalse(_block_overlaps_element(block, [elem]))
+
+    def test_partial_overlap_above_threshold(self):
+        from pdf2zh.export_markdown import _block_overlaps_element
+        # block 100×100, element covers 60×100 = 60% of block area
+        block = self._b(0, 0, 100, 100)
+        elem  = self._e(40, 0, 200, 100)     # intersection 60×100 = 60%
+        self.assertTrue(_block_overlaps_element(block, [elem]))
+
+    def test_empty_elem_list(self):
+        from pdf2zh.export_markdown import _block_overlaps_element
+        block = self._b(0, 0, 100, 100)
+        self.assertFalse(_block_overlaps_element(block, []))
+
+    def test_integrated_extraction_filter(self):
+        """_extract_page_text_blocks drops blocks overlapping elem_bboxes."""
+        from pdf2zh.export_markdown import _extract_page_text_blocks
+        page = MagicMock()
+        page.rect.height = 800
+        # Table region covers y=60-250 on this page
+        elem_bboxes = [{"x0": 0, "y0": 60, "x1": 600, "y1": 250, "pageno": 0}]
+        page.get_text.return_value = [
+            (0, 70, 500, 90, "Table row 1", 0, 0),     # fully inside table region
+            (0, 300, 500, 320, "Normal paragraph", 1, 0),  # outside
+        ]
+        result = _extract_page_text_blocks(page, elem_bboxes)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["content"], "Normal paragraph")
+
+
+class TestNormalizeBlockText(unittest.TestCase):
+    """_normalize_block_text should collapse intra-block soft line breaks."""
+
+    def test_uppercase_next_line_joined_with_space(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Next lines start with uppercase → joined with a space (word boundary)
+        text = "End of phrase\nBeginning of next\nAnd another"
+        self.assertEqual(
+            _normalize_block_text(text),
+            "End of phrase Beginning of next And another",
+        )
+
+    def test_lowercase_next_line_glued_directly(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Next line starts with lowercase ASCII → glue directly (mid-word split)
+        # e.g. "Quac\nkenbush" within the same block
+        text = "This is propos\nition of the theory"
+        self.assertEqual(
+            _normalize_block_text(text),
+            "This is proposition of the theory",
+        )
+
+    def test_hyphenated_break_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "meth-\nod" → "method"
+        text = "The meth-\nod is applied"
+        self.assertEqual(_normalize_block_text(text), "The method is applied")
+
+    def test_cjk_lines_joined_without_space(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Chinese characters: no space should be inserted
+        text = "这是一段\n很长的中文\n句子"
+        self.assertEqual(_normalize_block_text(text), "这是一段很长的中文句子")
+
+    def test_single_line_unchanged(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        text = "No newlines here"
+        self.assertEqual(_normalize_block_text(text), "No newlines here")
+
+    def test_empty_string(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        self.assertEqual(_normalize_block_text(""), "")
+
+    def test_trailing_newline_stripped_context(self):
+        """After strip(), trailing newline is gone; normalization handles the rest."""
+        from pdf2zh.export_markdown import _normalize_block_text
+        # strip() is applied before _normalize_block_text in the pipeline,
+        # but test that a trailing \n line (empty) doesn't add a trailing space
+        text = "Line one\nLine two"
+        result = _normalize_block_text(text)
+        self.assertFalse(result.endswith(" "))
+
+    def test_mixed_english_and_cjk(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # CJK ending → no space; then English continues
+        text = "实验结果表明\nthe accuracy is high"
+        result = _normalize_block_text(text)
+        # CJK line ends → joined directly
+        self.assertEqual(result, "实验结果表明the accuracy is high")
+
+    def test_intra_block_mid_word_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "Quac\nkenbush" should become "Quackenbush" (no space)
+        text = "（Quac\nkenbush，2018）"
+        self.assertEqual(_normalize_block_text(text), "（Quackenbush，2018）")
+
+    def test_new_sentence_after_period_gets_space(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # Next line starts uppercase → join with space
+        text = "End of sentence.\nNew sentence here."
+        self.assertEqual(_normalize_block_text(text), "End of sentence. New sentence here.")
+
+    def test_year_split_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "20\n17" → "2017"
+        text = "（Radhakrishnan 等，20\n17）"
+        self.assertEqual(_normalize_block_text(text), "（Radhakrishnan 等，2017）")
+
+    def test_thousands_separator_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "12\n,850" → "12,850"
+        text = "共 12\n,850 种期刊"
+        self.assertEqual(_normalize_block_text(text), "共 12,850 种期刊")
+
+    def test_digit_before_uppercase_not_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "10\nFlow theory" is a table row → keep space
+        text = "10\nFlow theory"
+        self.assertEqual(_normalize_block_text(text), "10 Flow theory")
+
+    def test_allcaps_abbreviation_glued(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "SL\nR" → "SLR"
+        text = "We used SL\nR in our review"
+        self.assertEqual(_normalize_block_text(text), "We used SLR in our review")
+
+    def test_allcaps_abbreviation_unctad(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "UNC\nTAD" → "UNCTAD"
+        text = "data from UNC\nTAD database"
+        self.assertEqual(_normalize_block_text(text), "data from UNCTAD database")
+
+    def test_mixed_case_word_not_glued_as_abbreviation(self):
+        from pdf2zh.export_markdown import _normalize_block_text
+        # "United States\nOf" → "United States Of" (last word "States" not all-caps)
+        text = "United States\nOf America"
+        self.assertEqual(_normalize_block_text(text), "United States Of America")
 
 
 class TestMergeBrokenLines(unittest.TestCase):

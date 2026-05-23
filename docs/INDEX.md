@@ -31,6 +31,8 @@
 | [explanation/call-flow.md](explanation/call-flow.md) | 5 种接入场景的完整调用链；Kernel 绕过汇总；4 个隐性耦合点分析 |
 | [explanation/module-architecture.md](explanation/module-architecture.md) | M1–M8 模块边界、依赖矩阵、解耦就绪度评分与三批次重构路线 |
 | [explanation/text-overlap-drop-cap-cascade.md](explanation/text-overlap-drop-cap-cascade.md) | 文本重叠根因：drop cap 三级字号级联导致正文误判为角标公式；`drop_cap_cascade` 标志的设计原理 |
+| [explanation/markdown-export-quality.md](explanation/markdown-export-quality.md) | mono.pdf 文字提取的四类噪声根因（竖排水印、页眉页脚、断行、元素重复）及每种过滤器的设计原理 |
+| [explanation/block-to-paragraph-pipeline.md](explanation/block-to-paragraph-pipeline.md) | PDF 文字块到 Markdown 段落的完整流水线：块内软换行折叠、阅读顺序排序、跨块断词合并的原理与设计原因 |
 
 ## rfcs/ — 设计提案
 
