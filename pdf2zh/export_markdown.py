@@ -8,12 +8,13 @@ Pipeline:
 4. Sort by reading order (column-aware geometric sort)
 5. Assemble Markdown: paragraphs, image wikilinks, italic captions, --- page separators
 """
+import json
 import logging
 import os
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pymupdf
@@ -26,6 +27,47 @@ CAPTION_KEYWORDS = [
     "fig", "figure", "table", "panel",
     "表", "图", "fig.", "panel a", "panel b",
 ]
+
+# Characters that unambiguously end a sentence or a self-contained token.
+# A block whose last non-space character is NOT in this set may be a soft-
+# wrapped line and should be joined to the next block.
+_SENTENCE_ENDS = frozenset(".!?。！？…」』\"'")
+
+
+def _merge_broken_lines(blocks: List[dict]) -> List[dict]:
+    """Join adjacent blocks that were split by PDF soft line-wrapping.
+
+    In two-column PDFs each visual line is often a separate text block.
+    When the last character of block N is NOT a sentence-ending punctuation
+    mark AND the first character of block N+1 is a lowercase ASCII letter
+    (continuation of an English word split at the column edge), the two
+    blocks are merged: their texts are concatenated directly (no space
+    needed because the split happens mid-word).
+
+    CJK text is not merged this way because Chinese sentences have no
+    inter-word spaces and break cleanly at character boundaries.
+    """
+    if not blocks:
+        return blocks
+
+    merged: List[dict] = []
+    carry = dict(blocks[0])  # working copy of the accumulator block
+
+    for nxt in blocks[1:]:
+        last_ch = carry["content"].rstrip()[-1] if carry["content"].rstrip() else ""
+        first_ch = nxt["content"].lstrip()[:1] if nxt["content"].lstrip() else ""
+
+        if last_ch and last_ch not in _SENTENCE_ENDS and first_ch.islower():
+            # Soft-wrapped English word: glue directly, extend bounding box
+            carry["content"] = carry["content"].rstrip() + nxt["content"].lstrip()
+            carry["x1"] = max(carry["x1"], nxt["x1"])
+            carry["y1"] = max(carry["y1"], nxt["y1"])
+        else:
+            merged.append(carry)
+            carry = dict(nxt)
+
+    merged.append(carry)
+    return merged
 
 
 def _parse_elem_filename(fname: str) -> Optional[dict]:
@@ -58,13 +100,121 @@ def _is_caption(text: str) -> bool:
     )
 
 
-def _extract_page_text_blocks(page: pymupdf.Page) -> List[dict]:
-    """Extract text blocks with positions from a pymupdf page."""
+def _load_element_bboxes(elements_subdir: str) -> Dict[int, List[dict]]:
+    """Load figure and table bounding boxes from elements/ and index by page number.
+
+    Reads ``figures.json`` (figures) and ``tables.json`` (tables) when present.
+    Both files store entries with the shape::
+
+        {"pageno": <int 0-based>, "x0": ..., "y0": ..., "x1": ..., "y1": ...}
+
+    Returns a dict keyed by 0-based page number, each value a list of bbox dicts.
+    Returns an empty dict when the directory or files are missing.
+    """
+    result: Dict[int, List[dict]] = {}
+    for fname in ("figures.json", "tables.json"):
+        fpath = os.path.join(elements_subdir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath, encoding="utf-8") as f:
+            for entry in json.load(f):
+                pageno = entry["pageno"]
+                result.setdefault(pageno, []).append(entry)
+    return result
+
+
+def _block_overlaps_element(block: dict, elem_bboxes: List[dict], threshold: float = 0.5) -> bool:
+    """Return True when the block overlaps significantly with any captured element region.
+
+    Uses intersection-over-block-area (IoB) so that a small text block
+    sitting entirely inside a large element region is filtered, while a
+    text block that merely grazes the element boundary is kept.
+
+    Args:
+        block: text block with keys x0/y0/x1/y1
+        elem_bboxes: list of element bboxes for the same page
+        threshold: minimum IoB ratio to consider an overlap (default 0.5)
+    """
+    bw = max(block["x1"] - block["x0"], 0)
+    bh = max(block["y1"] - block["y0"], 0)
+    block_area = bw * bh
+    if block_area <= 0:
+        return False
+
+    for elem in elem_bboxes:
+        ix0 = max(block["x0"], elem["x0"])
+        iy0 = max(block["y0"], elem["y0"])
+        ix1 = min(block["x1"], elem["x1"])
+        iy1 = min(block["y1"], elem["y1"])
+        inter_area = max(0, ix1 - ix0) * max(0, iy1 - iy0)
+        if inter_area / block_area >= threshold:
+            return True
+    return False
+
+
+def _is_header_footer(block: dict, page_height: float, margin: float = 0.08) -> bool:
+    """Return True when a block sits inside the top or bottom margin of a page.
+
+    pymupdf uses y-from-top coordinates, so:
+    - header zone: y1 < page_height * margin   (block is entirely near the top)
+    - footer zone: y0 > page_height * (1 - margin)
+
+    The default margin of 8 % matches the typical header/footer band in
+    academic journal PDFs (running titles, page numbers, journal URLs).
+    """
+    top_edge = page_height * margin
+    bottom_edge = page_height * (1.0 - margin)
+    return block["y1"] < top_edge or block["y0"] > bottom_edge
+
+
+def _is_vertical_text_block(text: str) -> bool:
+    """Return True when a block's content looks like rotated/vertical text.
+
+    When a PDF stores 90°-rotated text (journal watermarks, sidebar DOI
+    strings, etc.), pymupdf's text extractor emits each character on its
+    own line inside a single block.  The tell-tale sign is that virtually
+    every non-empty line is 1–2 characters long.
+
+    Threshold: ≥ 5 non-empty lines AND average line length ≤ 2.0.
+    """
+    non_empty = [l for l in text.split("\n") if l.strip()]
+    if len(non_empty) < 5:
+        return False
+    avg_len = sum(len(l) for l in non_empty) / len(non_empty)
+    return avg_len <= 2.0
+
+
+def _extract_page_text_blocks(
+    page: pymupdf.Page,
+    elem_bboxes: Optional[List[dict]] = None,
+) -> List[dict]:
+    """Extract text blocks with positions from a pymupdf page.
+
+    Filters applied (in order):
+    1. Empty / single-character blocks are discarded.
+    2. Vertical-text blocks (avg line length ≤ 2, ≥ 5 lines) are discarded:
+       they arise from rotated/vertical text such as journal watermarks and
+       DOI sidebars where every glyph is on its own line within the block.
+    3. Header/footer blocks (top or bottom 8 % of page height) are discarded.
+    4. Blocks that overlap ≥ 50 % with a captured figure/table element region
+       are discarded — they are duplicate text from an already-rendered image.
+
+    Args:
+        page: pymupdf page to extract from
+        elem_bboxes: list of element bounding boxes for this page (from
+            figures.json / tables.json).  Pass None or [] to skip filter 4.
+    """
+    ph = page.rect.height
     blocks = page.get_text("blocks")
-    return [
+    candidates = [
         {"x0": b[0], "y0": b[1], "x1": b[2], "y1": b[3], "content": b[4].strip()}
-        for b in blocks if b[4].strip()
+        for b in blocks
+        if len(b[4].strip()) > 1 and not _is_vertical_text_block(b[4])
     ]
+    candidates = [b for b in candidates if not _is_header_footer(b, ph)]
+    if elem_bboxes:
+        candidates = [b for b in candidates if not _block_overlaps_element(b, elem_bboxes)]
+    return candidates
 
 
 def export_pdf_to_markdown(
@@ -101,6 +251,11 @@ def export_pdf_to_markdown(
                     str(images_dir / fname),
                 )
 
+    # Load figure + table bboxes so we can suppress duplicate text inside images
+    all_elem_bboxes: Dict[int, List[dict]] = (
+        _load_element_bboxes(elements_subdir) if elements_subdir else {}
+    )
+
     lines: List[str] = []
 
     with pymupdf.open(pdf_mono_path) as doc_mono:
@@ -124,7 +279,7 @@ def export_pdf_to_markdown(
 
             next_elem_idx: dict = {"figure": 1, "table": 1}
 
-            blocks = _extract_page_text_blocks(page)
+            blocks = _extract_page_text_blocks(page, all_elem_bboxes.get(pageno))
             if not blocks:
                 # No text: dump all images for this page
                 for ef in elem_files:
@@ -139,6 +294,7 @@ def export_pdf_to_markdown(
             ph = page.rect.height
             flipped = [{**b, "y0": ph - b["y1"], "y1": ph - b["y0"]} for b in blocks]
             sorted_blocks = sort_text_blocks_by_layout(flipped, page.rect.width, ph, avg_w)
+            sorted_blocks = _merge_broken_lines(sorted_blocks)
 
             for block in sorted_blocks:
                 text = block["content"]
