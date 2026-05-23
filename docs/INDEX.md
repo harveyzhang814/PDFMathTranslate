@@ -30,6 +30,7 @@
 |------|------|
 | [explanation/call-flow.md](explanation/call-flow.md) | 5 种接入场景的完整调用链；Kernel 绕过汇总；4 个隐性耦合点分析 |
 | [explanation/module-architecture.md](explanation/module-architecture.md) | M1–M8 模块边界、依赖矩阵、解耦就绪度评分与三批次重构路线 |
+| [explanation/text-overlap-drop-cap-cascade.md](explanation/text-overlap-drop-cap-cascade.md) | 文本重叠根因：drop cap 三级字号级联导致正文误判为角标公式；`drop_cap_cascade` 标志的设计原理 |
 
 ## rfcs/ — 设计提案
 
