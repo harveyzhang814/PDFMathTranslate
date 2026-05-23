@@ -98,7 +98,7 @@ CLI (pdf2zh.py)
 | Kernel registry, CLI→kernel routing, translation pipeline | `pdf2zh/kernel/` | `test/test_kernel.py` |
 | Translators (cache, OpenAI-like, Ollama) | `pdf2zh/translator.py` | `test/test_translator.py` |
 | Figure/table crop coordinate logic (no y-flip) | `pdf2zh/high_level.py` | `test/test_element_extraction.py` |
-| Scanned-PDF overlap fix (detection + white-rect injection) | `pdf2zh/high_level.py`, `pdf2zh/pdfinterp.py` | `test/test_scanned_pdf.py` |
+| Scanned-PDF debackground post-processing (detection + white-rect injection) | `pdf2zh/debackground.py` | `test/test_scanned_pdf.py` |
 
 **No tests yet:** `text_order.py`, `high_level.py` (integration), `converter_docx.py`
 
